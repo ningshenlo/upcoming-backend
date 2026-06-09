@@ -18,7 +18,7 @@ services:
         "python",
         "official_release_sync.py",
         "--collectors",
-        "${OFFICIAL_RELEASE_COLLECTORS:-steam,nintendo,playstation}",
+        "${OFFICIAL_RELEASE_COLLECTORS:-steam,nintendo,playstation,xbox,epic,gog}",
         "--limit",
         "${OFFICIAL_RELEASE_LIMIT:-50}"
       ]
@@ -41,4 +41,64 @@ services:
         "steam_metadata_backfill.py",
         "--limit",
         "${STEAM_METADATA_BACKFILL_LIMIT:-80}"
+      ]
+
+  steam-tracked-refresh:
+    <<: *scraper
+    command:
+      [
+        "python",
+        "steam_tracked_refresh.py",
+        "--limit",
+        "${STEAM_TRACKED_REFRESH_LIMIT:-80}"
+      ]
+
+  playstation-tracked-refresh:
+    <<: *scraper
+    command:
+      [
+        "python",
+        "playstation_tracked_refresh.py",
+        "--limit",
+        "${PLAYSTATION_TRACKED_REFRESH_LIMIT:-80}"
+      ]
+
+  nintendo-tracked-refresh:
+    <<: *scraper
+    command:
+      [
+        "python",
+        "nintendo_tracked_refresh.py",
+        "--limit",
+        "${NINTENDO_TRACKED_REFRESH_LIMIT:-80}"
+      ]
+
+  xbox-tracked-refresh:
+    <<: *scraper
+    command:
+      [
+        "python",
+        "xbox_tracked_refresh.py",
+        "--limit",
+        "${XBOX_TRACKED_REFRESH_LIMIT:-80}"
+      ]
+
+  epic-tracked-refresh:
+    <<: *scraper
+    command:
+      [
+        "python",
+        "epic_tracked_refresh.py",
+        "--limit",
+        "${EPIC_TRACKED_REFRESH_LIMIT:-80}"
+      ]
+
+  gog-tracked-refresh:
+    <<: *scraper
+    command:
+      [
+        "python",
+        "tracked/gog_tracked_refresh.py",
+        "--limit",
+        "${GOG_TRACKED_REFRESH_LIMIT:-80}"
       ]

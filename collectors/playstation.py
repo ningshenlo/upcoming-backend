@@ -58,7 +58,7 @@ def collect(limit: int, user_agent: str) -> CollectorResult:
             try:
                 store_page_html = fetch_text(game.source_url, user_agent)
                 store_pages[concept_id] = {"url": game.source_url, "html": store_page_html}
-                game = apply_concept_page_store_links(game, store_page_html)
+                game = apply_concept_page_store_links(game, store_page_html, detail_payload=detail_payload)
             except Exception as exc:
                 store_pages[concept_id] = {"url": game.source_url, "error": str(exc)}
             games.append(game)
@@ -98,20 +98,21 @@ def parse_concept_detail_payload(payload: Any, fallback: dict[str, Any] | None =
     return _game_from_concept(concept, fallback or {})
 
 
-def apply_concept_page_store_links(game: CollectedGame, html: str) -> CollectedGame:
-    store_links = parse_concept_page_store_links(html, game.source_url)
+def apply_concept_page_store_links(game: CollectedGame, html: str, detail_payload: Any | None = None) -> CollectedGame:
+    store_links = parse_concept_page_store_links(html, game.source_url, detail_payload=detail_payload)
     if not store_links:
         return game
     return replace(game, store_links=store_links, events=_events_from_store_links(game, store_links))
 
 
-def parse_concept_page_store_links(html: str, source_url: str) -> list[StoreLink]:
+def parse_concept_page_store_links(html: str, source_url: str, detail_payload: Any | None = None) -> list[StoreLink]:
     cache, translations = _page_env_cache(html)
     if not cache:
         return []
 
     concept_id = _concept_id_from_url(source_url)
     concept = _page_concept(cache, concept_id)
+    context_product = _detail_default_product(detail_payload)
     default_product_ref = _ref_key(concept.get("defaultProduct")) if concept else None
     wishlist_available = _bool_value(concept.get("isWishlistable")) if concept else None
     release_date_text = _release_date_text(concept.get("releaseDate")) if concept else None
@@ -147,7 +148,15 @@ def parse_concept_page_store_links(html: str, source_url: str) -> list[StoreLink
 
     links: list[StoreLink] = []
     for _, _, product in sorted(products, key=lambda item: (item[0], item[1])):
-        link = _store_link_from_product(product, cache, translations, source_url, wishlist_available, release_date_text)
+        link = _store_link_from_product(
+            product,
+            cache,
+            translations,
+            source_url,
+            wishlist_available,
+            release_date_text,
+            context_product=context_product,
+        )
         if link:
             links.append(link)
     return links
@@ -288,6 +297,7 @@ def _game_from_concept(concept: dict[str, Any], fallback: dict[str, Any]) -> Col
         trailer_url=trailer_url,
         trailer_thumbnail_url=trailer_thumbnail_url,
         publishers=_company_names(concept.get("publisherName") or (default_product.get("publisherName") if default_product else None)),
+        developers=_company_names(concept.get("developerName") or (default_product.get("developerName") if default_product else None)),
         external_ids=external_ids,
     )
 
@@ -404,6 +414,13 @@ def _page_concept(cache: dict[str, Any], concept_id: str | None) -> dict[str, An
     return None
 
 
+def _detail_default_product(payload: Any) -> dict[str, Any] | None:
+    concept = _find_key(payload, "conceptRetrieve")
+    if not isinstance(concept, dict):
+        return None
+    return _dict_value(concept.get("defaultProduct"))
+
+
 def _store_link_from_product(
     product: dict[str, Any],
     cache: dict[str, Any],
@@ -411,6 +428,7 @@ def _store_link_from_product(
     source_url: str,
     wishlist_available: bool | None,
     release_date_text: str | None,
+    context_product: dict[str, Any] | None = None,
 ) -> StoreLink | None:
     product_id = _string_value(product.get("id"))
     if not product_id:
@@ -426,6 +444,24 @@ def _store_link_from_product(
     edition_features = _string_list(edition.get("features"))
     cta_type = _string_value(cta.get("type") if cta else None)
     cta_id = _string_value(cta.get("id") if cta else None)
+    context_product = context_product or {}
+    genres = _first_list(
+        _localized_value_list(product.get("combinedLocalizedGenres")),
+        _localized_value_list(context_product.get("combinedLocalizedGenres")),
+    )
+    screen_languages = _first_list(
+        _localized_value_list(product.get("screenLanguages")),
+        _localized_value_list(context_product.get("screenLanguages")),
+    )
+    spoken_languages = _first_list(
+        _localized_value_list(product.get("spokenLanguages")),
+        _localized_value_list(context_product.get("spokenLanguages")),
+    )
+    languages = list(dict.fromkeys(screen_languages + spoken_languages))
+    content_rating = _content_rating(product.get("contentRating")) or _content_rating(context_product.get("contentRating"))
+    compatibility_notices = _compatibility_notices(product.get("compatibilityNotices")) or _compatibility_notices(
+        context_product.get("compatibilityNotices")
+    )
 
     return StoreLink(
         id=f"playstation_store:{product_id}",
@@ -451,8 +487,79 @@ def _store_link_from_product(
             "ctaLabel": cta_label,
             "ctaType": _string_value(local.get("ctaType")),
             "storeDisplayClassification": _string_value(product.get("storeDisplayClassification")),
+            "localizedStoreDisplayClassification": _string_value(product.get("localizedStoreDisplayClassification")),
+            "topCategory": _clean_text(product.get("topCategory")),
+            "genres": genres,
+            "tags": genres,
+            "screenLanguages": screen_languages,
+            "spokenLanguages": spoken_languages,
+            "languages": languages,
+            "contentRating": content_rating,
+            "compatibilityNotices": compatibility_notices,
         },
     )
+
+
+def _first_list(*values: list[str]) -> list[str]:
+    for value in values:
+        if value:
+            return value
+    return []
+
+
+def _localized_value_list(value: Any) -> list[str]:
+    values = value if isinstance(value, list) else [value]
+    items: list[str] = []
+    for item in values:
+        if isinstance(item, dict):
+            text = _clean_text(item.get("value") or item.get("description") or item.get("name"))
+        else:
+            text = _clean_text(item)
+        if text:
+            items.append(text)
+    return list(dict.fromkeys(items))
+
+
+def _content_rating(value: Any) -> dict[str, Any]:
+    rating = _dict_value(value)
+    if not rating:
+        return {}
+    payload = {
+        "authority": _string_value(rating.get("authority")),
+        "name": _string_value(rating.get("name")),
+        "description": _clean_text(rating.get("description")),
+        "descriptors": _rating_descriptions(rating.get("descriptors")),
+        "interactiveElements": _rating_descriptions(rating.get("interactiveElements")),
+        "imageUrl": _string_value(rating.get("url")),
+    }
+    return {key: item for key, item in payload.items() if item}
+
+
+def _rating_descriptions(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    items: list[str] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        text = _clean_text(item.get("description") or item.get("name"))
+        if text:
+            items.append(text)
+    return list(dict.fromkeys(items))
+
+
+def _compatibility_notices(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    items: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        notice_type = _string_value(item.get("type"))
+        notice_value = _string_value(item.get("value"))
+        if notice_type and notice_value:
+            items.append({"type": notice_type, "value": notice_value})
+    return items
 
 
 def _product_cta(product: dict[str, Any], cache: dict[str, Any]) -> dict[str, Any] | None:

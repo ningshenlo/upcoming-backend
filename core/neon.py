@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from contextlib import AbstractContextManager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 from .models import CollectedEvent, CollectedGame, StoreLink
@@ -52,6 +55,7 @@ class NeonStore(AbstractContextManager["NeonStore"]):
         self.database_url = database_url
         self.conn = None
         self._has_source_observations_table: bool | None = None
+        self._has_game_updates_table: bool | None = None
 
     def __enter__(self) -> "NeonStore":
         self.conn = self._connect()
@@ -212,16 +216,17 @@ class NeonStore(AbstractContextManager["NeonStore"]):
             existing_slug = self._existing_slug_for_collected_game(cur, item)
             if existing_slug:
                 game_slug = existing_slug
+            previous_snapshot = self._collected_game_snapshot(cur, game_slug, item)
             cur.execute(
                 """
                 INSERT INTO games (
                     slug, title, canonical_title, description, short_description,
                     cover_image_url, header_image_url, screenshot_urls,
                     trailer_url, trailer_thumbnail_url,
-                    official_url, primary_release_date, steam_app_id, status,
+                    official_url, first_release_date, primary_release_date, steam_app_id, status,
                     data_completeness, needs_review, last_scraped_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'upcoming', %s, %s, now())
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'upcoming', %s, %s, now())
                 ON CONFLICT (slug) DO UPDATE SET
                     title = EXCLUDED.title,
                     canonical_title = EXCLUDED.canonical_title,
@@ -233,6 +238,11 @@ class NeonStore(AbstractContextManager["NeonStore"]):
                     trailer_url = COALESCE(EXCLUDED.trailer_url, games.trailer_url),
                     trailer_thumbnail_url = COALESCE(EXCLUDED.trailer_thumbnail_url, games.trailer_thumbnail_url),
                     official_url = COALESCE(EXCLUDED.official_url, games.official_url),
+                    first_release_date = CASE
+                        WHEN EXCLUDED.first_release_date IS NULL THEN games.first_release_date
+                        WHEN games.first_release_date IS NULL THEN EXCLUDED.first_release_date
+                        ELSE LEAST(games.first_release_date, EXCLUDED.first_release_date)
+                    END,
                     primary_release_date = CASE
                         WHEN EXCLUDED.primary_release_date IS NULL THEN games.primary_release_date
                         WHEN games.primary_release_date IS NULL THEN EXCLUDED.primary_release_date
@@ -261,6 +271,7 @@ class NeonStore(AbstractContextManager["NeonStore"]):
                     item.trailer_url,
                     item.trailer_thumbnail_url,
                     item.source_url,
+                    item.release_date,
                     item.release_date,
                     item.external_ids.get("steamAppId"),
                     data_completeness,
@@ -291,6 +302,8 @@ class NeonStore(AbstractContextManager["NeonStore"]):
 
             for store_link in item.store_links:
                 self._upsert_store_link(cur, game_id, platform_ids, store_link, item, raw_data_path, data_job_id)
+
+            self._record_game_updates(cur, game_id, item, previous_snapshot, raw_data_path, data_job_id)
 
         return game_id
 
@@ -365,7 +378,479 @@ class NeonStore(AbstractContextManager["NeonStore"]):
         score += 10 if item.publishers or item.developers else 0
         score += 15 if item.store_links else 0
         score += 10 if item.events or item.launch_time_utc else 0
-        return min(1.0, score / 100)
+        return min(100.0, float(score))
+
+    def _collected_game_snapshot(self, cur, game_slug: str, item: CollectedGame) -> dict[str, Any] | None:
+        cur.execute(
+            """
+            SELECT id
+            FROM games
+            WHERE slug = %s
+            LIMIT 1
+            """,
+            (game_slug,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+
+        game_id = row[0]
+        snapshot: dict[str, Any] = {
+            "gameId": game_id,
+            "release": self._release_snapshot(cur, game_id),
+            "stores": self._store_link_snapshots(cur, item),
+            "publishers": [],
+            "developers": [],
+        }
+        cur.execute(
+            """
+            SELECT gc.role, c.name
+            FROM game_companies gc
+            JOIN companies c ON c.id = gc.company_id
+            WHERE gc.game_id = %s
+              AND gc.role = ANY(%s)
+            ORDER BY c.name
+            """,
+            (game_id, ["publisher", "developer"]),
+        )
+        for role, name in cur.fetchall():
+            if role == "publisher":
+                snapshot["publishers"].append(name)
+            elif role == "developer":
+                snapshot["developers"].append(name)
+        return snapshot
+
+    def _release_snapshot(self, cur, game_id: str) -> dict[str, Any]:
+        cur.execute(
+            """
+            SELECT date, date_accuracy
+            FROM release_events
+            WHERE game_id = %s
+              AND event_type = 'release'
+            ORDER BY CASE date_accuracy
+                WHEN 'exact' THEN 5
+                WHEN 'week' THEN 4
+                WHEN 'month' THEN 3
+                WHEN 'quarter' THEN 2
+                WHEN 'year' THEN 1
+                ELSE 0
+              END DESC,
+              date NULLS LAST,
+              created_at ASC
+            LIMIT 1
+            """,
+            (game_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {"date": None, "dateAccuracy": "unknown"}
+        return {"date": self._date_text(row[0]), "dateAccuracy": self._date_accuracy(row[1])}
+
+    def _store_link_snapshots(self, cur, item: CollectedGame) -> dict[str, dict[str, Any]]:
+        link_ids = self._store_link_identity_ids(item)
+        if not link_ids:
+            return {}
+        cur.execute(
+            """
+            SELECT id, url, price_text, price, currency, demo_available, release_date_text, metadata
+            FROM store_links
+            WHERE id = ANY(%s)
+            """,
+            (link_ids,),
+        )
+        stores: dict[str, dict[str, Any]] = {}
+        for row in cur.fetchall():
+            metadata = row[7] if isinstance(row[7], dict) else {}
+            stores[row[0]] = self._store_tracking_value(
+                url=row[1],
+                price_text=row[2],
+                price=row[3],
+                currency=row[4],
+                demo_available=row[5],
+                release_date_text=row[6],
+                metadata=metadata,
+            )
+        return stores
+
+    def _game_update_changes(self, previous: dict[str, Any] | None, item: CollectedGame) -> list[dict[str, Any]]:
+        if not previous:
+            return []
+
+        changes: list[dict[str, Any]] = []
+        previous_release = previous.get("release") or {}
+        current_release = {"date": item.release_date, "dateAccuracy": self._date_accuracy(item.date_accuracy)}
+        previous_date = previous_release.get("date")
+        current_date = current_release.get("date")
+        previous_accuracy = self._date_accuracy(previous_release.get("dateAccuracy"))
+        current_accuracy = current_release["dateAccuracy"]
+
+        if current_date and not previous_date:
+            changes.append(
+                self._game_update_change(
+                    "release_date_announced",
+                    item,
+                    "Release date announced",
+                    f"{item.title} now has a Steam release date: {current_date}.",
+                    previous_release,
+                    current_release,
+                    confidence=85,
+                )
+            )
+        elif current_date and previous_date and current_date != previous_date:
+            changes.append(
+                self._game_update_change(
+                    "release_date_changed",
+                    item,
+                    "Release date changed",
+                    f"{item.title} release date changed from {previous_date} to {current_date}.",
+                    previous_release,
+                    current_release,
+                    confidence=90,
+                )
+            )
+        elif (
+            current_date
+            and previous_date
+            and DATE_ACCURACY_RANK[current_accuracy] > DATE_ACCURACY_RANK[previous_accuracy]
+        ):
+            changes.append(
+                self._game_update_change(
+                    "release_date_confirmed",
+                    item,
+                    "Release date confirmed",
+                    f"{item.title} release date accuracy improved from {previous_accuracy} to {current_accuracy}.",
+                    previous_release,
+                    current_release,
+                    confidence=85,
+                )
+            )
+
+        previous_stores = previous.get("stores") or {}
+        for link in item.store_links:
+            link_id = self._store_link_identity_id(link)
+            current_store = self._store_tracking_value(
+                url=link.url,
+                price_text=link.price_text,
+                price=link.price,
+                currency=link.currency,
+                demo_available=link.demo_available,
+                release_date_text=link.release_date_text,
+                metadata=link.metadata,
+            )
+            previous_store = previous_stores.get(link_id, {})
+            changes.extend(self._store_update_changes(item, link_id, previous_store, current_store))
+
+        current_companies = {
+            "publishers": self._company_names(item.publishers),
+            "developers": self._company_names(item.developers),
+        }
+        previous_companies = {
+            "publishers": previous.get("publishers") or [],
+            "developers": previous.get("developers") or [],
+        }
+        if any(current_companies.values()) and current_companies != previous_companies:
+            changes.append(
+                self._game_update_change(
+                    "company_changed",
+                    item,
+                    "Companies changed",
+                    f"{item.title} publisher or developer metadata changed.",
+                    previous_companies,
+                    current_companies,
+                    confidence=75,
+                )
+            )
+
+        return changes
+
+    def _store_update_changes(
+        self,
+        item: CollectedGame,
+        link_id: str,
+        previous_store: dict[str, Any],
+        current_store: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        changes: list[dict[str, Any]] = []
+
+        if current_store.get("demoAvailable") is True and previous_store.get("demoAvailable") is not True:
+            changes.append(
+                self._game_update_change(
+                    "demo_available",
+                    item,
+                    "Demo available",
+                    f"{item.title} now has a demo available.",
+                    {"demoAvailable": previous_store.get("demoAvailable")},
+                    {"demoAvailable": True},
+                    confidence=85,
+                    store_link_id=link_id,
+                    source_url=current_store.get("url"),
+                )
+            )
+        elif current_store.get("demoAvailable") is False and previous_store.get("demoAvailable") is True:
+            changes.append(
+                self._game_update_change(
+                    "demo_removed",
+                    item,
+                    "Demo removed",
+                    f"{item.title} no longer reports a demo.",
+                    {"demoAvailable": True},
+                    {"demoAvailable": False},
+                    confidence=80,
+                    store_link_id=link_id,
+                    source_url=current_store.get("url"),
+                )
+            )
+
+        previous_price = self._price_tracking_value(previous_store)
+        current_price = self._price_tracking_value(current_store)
+        if self._has_price(current_price):
+            if not self._has_price(previous_price):
+                changes.append(
+                    self._game_update_change(
+                        "price_available",
+                        item,
+                        "Price available",
+                        f"{item.title} now has store price information.",
+                        previous_price,
+                        current_price,
+                        confidence=80,
+                        store_link_id=link_id,
+                        source_url=current_store.get("url"),
+                    )
+                )
+            elif previous_price != current_price:
+                changes.append(
+                    self._game_update_change(
+                        "price_changed",
+                        item,
+                        "Price changed",
+                        f"{item.title} store price information changed.",
+                        previous_price,
+                        current_price,
+                        confidence=80,
+                        store_link_id=link_id,
+                        source_url=current_store.get("url"),
+                    )
+                )
+
+        previous_metadata = self._metadata_tracking_value(previous_store)
+        current_metadata = self._metadata_tracking_value(current_store)
+        if current_metadata:
+            if not previous_metadata:
+                changes.append(
+                    self._game_update_change(
+                        "metadata_enriched",
+                        item,
+                        "Store metadata enriched",
+                        f"{item.title} gained store tags, genres, categories, or language metadata.",
+                        previous_metadata,
+                        current_metadata,
+                        confidence=70,
+                        store_link_id=link_id,
+                        source_url=current_store.get("url"),
+                    )
+                )
+            elif previous_metadata != current_metadata:
+                changes.append(
+                    self._game_update_change(
+                        "metadata_changed",
+                        item,
+                        "Store metadata changed",
+                        f"{item.title} store tags, genres, categories, or language metadata changed.",
+                        previous_metadata,
+                        current_metadata,
+                        confidence=70,
+                        store_link_id=link_id,
+                        source_url=current_store.get("url"),
+                    )
+                )
+
+        return changes
+
+    def _game_update_change(
+        self,
+        update_type: str,
+        item: CollectedGame,
+        title: str,
+        summary: str,
+        before_value: dict[str, Any],
+        after_value: dict[str, Any],
+        confidence: int,
+        store_link_id: str | None = None,
+        source_url: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "update_type": update_type,
+            "title": title,
+            "summary": summary,
+            "before_value": self._json_safe(before_value),
+            "after_value": self._json_safe(after_value),
+            "confidence": confidence,
+            "store_link_id": store_link_id,
+            "source_url": source_url or item.source_url,
+        }
+
+    def _record_game_updates(
+        self,
+        cur,
+        game_id: str,
+        item: CollectedGame,
+        previous_snapshot: dict[str, Any] | None,
+        raw_data_path: str | None,
+        data_job_id: str | None,
+    ) -> None:
+        if not previous_snapshot or not self._game_updates_available(cur):
+            return
+        for change in self._game_update_changes(previous_snapshot, item):
+            self._insert_game_update(cur, game_id, item, change, raw_data_path, data_job_id)
+
+    def _insert_game_update(
+        self,
+        cur,
+        game_id: str,
+        item: CollectedGame,
+        change: dict[str, Any],
+        raw_data_path: str | None,
+        data_job_id: str | None,
+    ) -> None:
+        source_id = self._source_id(item.source_slug)
+        dedupe_key = self._game_update_dedupe_key(game_id, item.source_slug, change)
+        cur.execute(
+            """
+            INSERT INTO game_updates (
+                game_id, store_link_id, source_id, data_job_id, source_slug, source_url,
+                update_type, title, summary, before_value, after_value, confidence,
+                raw_data_path, dedupe_key, observed_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+            ON CONFLICT (dedupe_key) DO NOTHING
+            """,
+            (
+                game_id,
+                change.get("store_link_id"),
+                source_id,
+                data_job_id,
+                item.source_slug,
+                change.get("source_url") or item.source_url,
+                change["update_type"],
+                change["title"],
+                change["summary"],
+                _json(change["before_value"]),
+                _json(change["after_value"]),
+                self._clamp_confidence(change["confidence"]),
+                raw_data_path,
+                dedupe_key,
+            ),
+        )
+
+    def _game_updates_available(self, cur) -> bool:
+        if self._has_game_updates_table is None:
+            cur.execute("SELECT to_regclass('public.game_updates') IS NOT NULL")
+            self._has_game_updates_table = bool(cur.fetchone()[0])
+        return self._has_game_updates_table
+
+    def _game_update_dedupe_key(self, game_id: str, source_slug: str, change: dict[str, Any]) -> str:
+        payload = json.dumps(
+            {
+                "gameId": game_id,
+                "sourceSlug": source_slug,
+                "updateType": change["update_type"],
+                "storeLinkId": change.get("store_link_id"),
+                "before": change["before_value"],
+                "after": change["after_value"],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _store_link_identity_id(self, link: StoreLink) -> str:
+        if link.id:
+            return link.id
+        return f"{link.store_name}:{link.product_id or slugify(link.url)}"
+
+    def _store_tracking_value(
+        self,
+        url: str | None,
+        price_text: str | None,
+        price: Any,
+        currency: str | None,
+        demo_available: bool | None,
+        release_date_text: str | None,
+        metadata: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        metadata = metadata or {}
+        return {
+            "url": url,
+            "priceText": price_text,
+            "price": self._json_safe(price),
+            "currency": currency,
+            "demoAvailable": demo_available,
+            "releaseDateText": release_date_text,
+            "tags": self._metadata_list(metadata, "tags", "steamTags"),
+            "genres": self._metadata_list(metadata, "genres"),
+            "categories": self._metadata_list(metadata, "categories"),
+            "languages": self._metadata_list(metadata, "languages"),
+            "supportsChinese": metadata.get("supportsChinese") if isinstance(metadata.get("supportsChinese"), bool) else None,
+        }
+
+    def _price_tracking_value(self, store: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "priceText": store.get("priceText"),
+            "price": store.get("price"),
+            "currency": store.get("currency"),
+        }
+
+    def _metadata_tracking_value(self, store: dict[str, Any]) -> dict[str, Any]:
+        keys = ("tags", "genres", "categories", "languages", "supportsChinese")
+        return {key: store.get(key) for key in keys if self._has_value(store.get(key))}
+
+    def _metadata_list(self, metadata: dict[str, Any], *keys: str) -> list[str]:
+        for key in keys:
+            value = metadata.get(key)
+            if isinstance(value, list):
+                items: list[str] = []
+                for item in value:
+                    if item is None:
+                        continue
+                    text = str(item).strip()
+                    if text:
+                        items.append(text)
+                return items
+        return []
+
+    def _has_price(self, value: dict[str, Any]) -> bool:
+        return self._has_value(value.get("price")) or self._has_value(value.get("priceText"))
+
+    def _has_value(self, value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, (list, dict, str)):
+            return bool(value)
+        return True
+
+    def _date_text(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        return str(value)
+
+    def _json_safe(self, value: Any) -> Any:
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        if isinstance(value, Decimal):
+            return float(value)
+        if isinstance(value, list):
+            return [self._json_safe(item) for item in value]
+        if isinstance(value, dict):
+            return {str(key): self._json_safe(item) for key, item in value.items()}
+        return value
 
     def _source_observations_available(self, cur) -> bool:
         if self._has_source_observations_table is None:
@@ -552,6 +1037,8 @@ class NeonStore(AbstractContextManager["NeonStore"]):
                         canonical_title = COALESCE(canonical_title, %s),
                         description = COALESCE(description, %s),
                         cover_image_url = COALESCE(cover_image_url, %s),
+                        first_release_date = COALESCE(first_release_date, %s),
+                        primary_release_date = COALESCE(primary_release_date, %s),
                         igdb_id = COALESCE(igdb_id, %s),
                         needs_review = true,
                         last_scraped_at = now(),
@@ -563,6 +1050,8 @@ class NeonStore(AbstractContextManager["NeonStore"]):
                         item.title.lower(),
                         item.description,
                         item.cover_image_url,
+                        item.release_date,
+                        item.release_date,
                         igdb_id,
                         game_id,
                     ),
@@ -572,9 +1061,9 @@ class NeonStore(AbstractContextManager["NeonStore"]):
                     """
                     INSERT INTO games (
                         slug, title, canonical_title, description, cover_image_url,
-                        igdb_id, status, needs_review, last_scraped_at
+                        first_release_date, primary_release_date, igdb_id, status, needs_review, last_scraped_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, 'announced', true, now())
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'announced', true, now())
                     RETURNING id
                     """,
                     (
@@ -583,6 +1072,8 @@ class NeonStore(AbstractContextManager["NeonStore"]):
                         item.title.lower(),
                         item.description,
                         item.cover_image_url,
+                        item.release_date,
+                        item.release_date,
                         igdb_id,
                     ),
                 )
@@ -910,9 +1401,9 @@ class NeonStore(AbstractContextManager["NeonStore"]):
                 id, game_id, platform_id, store_name, url, product_id, sku_id,
                 np_title_id, edition_name, edition_type, edition_features,
                 price_text, price, currency, preorder_available, wishlist_available,
-                demo_available, release_date_text, metadata, last_checked_at
+                demo_available, release_date_text, affiliate_url, metadata, last_checked_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
             ON CONFLICT (id) DO UPDATE SET
                 game_id = EXCLUDED.game_id,
                 platform_id = COALESCE(EXCLUDED.platform_id, store_links.platform_id),
@@ -933,6 +1424,7 @@ class NeonStore(AbstractContextManager["NeonStore"]):
                 END,
                 demo_available = COALESCE(EXCLUDED.demo_available, store_links.demo_available),
                 release_date_text = COALESCE(EXCLUDED.release_date_text, store_links.release_date_text),
+                affiliate_url = COALESCE(EXCLUDED.affiliate_url, store_links.affiliate_url),
                 metadata = COALESCE(store_links.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),
                 last_checked_at = now(),
                 updated_at = now()
@@ -956,6 +1448,7 @@ class NeonStore(AbstractContextManager["NeonStore"]):
                 link.wishlist_available,
                 link.demo_available,
                 link.release_date_text,
+                link.affiliate_url,
                 _json(metadata),
             ),
         )
@@ -1013,6 +1506,7 @@ class NeonStore(AbstractContextManager["NeonStore"]):
             "editionFeatures": link.edition_features,
             "priceText": link.price_text,
             "releaseDateText": link.release_date_text,
+            "affiliateUrl": link.affiliate_url,
             "metadata": link.metadata,
         }
         normalized_value = {
@@ -1028,6 +1522,7 @@ class NeonStore(AbstractContextManager["NeonStore"]):
             "preorderAvailable": link.preorder_available,
             "wishlistAvailable": link.wishlist_available,
             "demoAvailable": link.demo_available,
+            "affiliateUrl": link.affiliate_url,
         }
         self._insert_source_observation(
             cur,

@@ -9,21 +9,21 @@ from collectors.steam import STEAM_APPDETAILS_URL, STEAM_APP_PAGE_URL, apply_app
 from core.config import load_settings
 from core.http_client import fetch_json, fetch_text
 from core.job_logger import finish_job, resolve_job_status, start_job
-from core.models import CollectedGame
 from core.neon import NeonStore
+from steam_metadata_backfill import _row_to_game
 
 
 @dataclass(frozen=True)
-class BackfillResult:
+class RefreshResult:
     status: str
     processed_count: int
     failed_count: int
 
 
-def run_backfill(limit: int) -> BackfillResult:
+def run_refresh(limit: int) -> RefreshResult:
     settings = load_settings()
     if not settings.database_url:
-        raise RuntimeError("DATABASE_URL is required for Steam metadata backfill")
+        raise RuntimeError("DATABASE_URL is required for Steam tracked refresh")
 
     with NeonStore(settings.database_url) as store:
         job = start_job(
@@ -31,19 +31,18 @@ def run_backfill(limit: int) -> BackfillResult:
             "official_release_sync",
             {
                 "collectors": ["steam"],
-                "mode": "steam_metadata_backfill",
+                "mode": "steam_tracked_refresh",
                 "limit": limit,
                 "startedAt": datetime.now(timezone.utc).isoformat(),
             },
         )
-        rows = _missing_steam_metadata_rows(store, limit)
+        rows = _tracked_steam_rows(store, limit)
         for row in rows:
             app_id = row["steam_app_id"]
             try:
-                details_url = STEAM_APPDETAILS_URL.format(app_id=app_id)
-                payload = fetch_json(details_url, settings.user_agent)
                 game = _row_to_game(row)
-                enriched = apply_appdetails(game, payload)
+                details_url = STEAM_APPDETAILS_URL.format(app_id=app_id)
+                enriched = apply_appdetails(game, fetch_json(details_url, settings.user_agent))
                 job.processed_count += 1
                 if enriched is None:
                     job.skipped_count += 1
@@ -64,10 +63,10 @@ def run_backfill(limit: int) -> BackfillResult:
         status = resolve_job_status(job)
         error_message = "; ".join(item["message"] for item in job.errors[:3]) if job.errors else None
         finish_job(store, job, status, error_message=error_message)
-        return BackfillResult(status=status, processed_count=job.processed_count, failed_count=job.error_count)
+        return RefreshResult(status=status, processed_count=job.processed_count, failed_count=job.error_count)
 
 
-def _missing_steam_metadata_rows(store: NeonStore, limit: int) -> list[dict[str, Any]]:
+def _tracked_steam_rows(store: NeonStore, limit: int) -> list[dict[str, Any]]:
     assert store.conn is not None
     with store.conn.cursor() as cur:
         cur.execute(
@@ -79,7 +78,17 @@ def _missing_steam_metadata_rows(store: NeonStore, limit: int) -> list[dict[str,
                 date_accuracy
               FROM release_events
               WHERE event_type = 'release'
-              ORDER BY game_id, date NULLS LAST, created_at
+              ORDER BY game_id,
+                CASE date_accuracy
+                  WHEN 'exact' THEN 5
+                  WHEN 'week' THEN 4
+                  WHEN 'month' THEN 3
+                  WHEN 'quarter' THEN 2
+                  WHEN 'year' THEN 1
+                  ELSE 0
+                END DESC,
+                date NULLS LAST,
+                created_at ASC
             )
             SELECT
               g.id,
@@ -93,20 +102,24 @@ def _missing_steam_metadata_rows(store: NeonStore, limit: int) -> list[dict[str,
             JOIN game_platforms gp ON gp.game_id = g.id
             JOIN platforms p ON p.id = gp.platform_id AND p.slug = 'steam'
             LEFT JOIN first_release fr ON fr.game_id = g.id
-            LEFT JOIN store_links sl ON sl.game_id = g.id AND sl.store_name = 'steam'
+            LEFT JOIN LATERAL (
+              SELECT last_checked_at
+              FROM store_links
+              WHERE game_id = g.id
+                AND store_name = 'steam'
+              ORDER BY last_checked_at DESC NULLS LAST
+              LIMIT 1
+            ) sl ON true
             WHERE g.status = 'upcoming'
               AND g.steam_app_id IS NOT NULL
-              AND COALESCE(fr.release_date, g.primary_release_date)::date >= CURRENT_DATE
               AND (
-                sl.id IS NULL
-                OR NULLIF(sl.price_text, '') IS NULL
-                OR NOT (
-                  (jsonb_typeof(sl.metadata->'tags') = 'array' AND jsonb_array_length(sl.metadata->'tags') > 0)
-                  OR (jsonb_typeof(sl.metadata->'categories') = 'array' AND jsonb_array_length(sl.metadata->'categories') > 0)
-                  OR (jsonb_typeof(sl.metadata->'genres') = 'array' AND jsonb_array_length(sl.metadata->'genres') > 0)
-                )
+                COALESCE(fr.release_date, g.primary_release_date) IS NULL
+                OR COALESCE(fr.release_date, g.primary_release_date)::date >= CURRENT_DATE
               )
-            ORDER BY COALESCE(fr.release_date, g.primary_release_date) NULLS LAST, g.updated_at DESC
+            ORDER BY
+              COALESCE(sl.last_checked_at, g.last_scraped_at, g.updated_at, g.created_at) ASC NULLS FIRST,
+              COALESCE(fr.release_date, g.primary_release_date) ASC NULLS LAST,
+              g.updated_at ASC
             LIMIT %s
             """,
             (limit,),
@@ -115,34 +128,17 @@ def _missing_steam_metadata_rows(store: NeonStore, limit: int) -> list[dict[str,
         return [dict(zip(columns, row)) for row in cur.fetchall()]
 
 
-def _row_to_game(row: dict[str, Any]) -> CollectedGame:
-    app_id = int(row["steam_app_id"])
-    source_url = row["official_url"] or f"https://store.steampowered.com/app/{app_id}/"
-    release_date = row["release_date"]
-    release_date_text = release_date.date().isoformat() if hasattr(release_date, "date") else release_date
-    return CollectedGame(
-        title=row["title"],
-        source_slug="steam",
-        source_url=source_url,
-        platform_slugs=["pc", "steam"],
-        release_date=str(release_date_text) if release_date_text else None,
-        date_accuracy=row["date_accuracy"] or "unknown",
-        cover_image_url=row["cover_image_url"],
-        external_ids={"steamAppId": app_id},
-    )
-
-
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Backfill Steam store metadata for existing upcoming games.")
+    parser = argparse.ArgumentParser(description="Refresh tracked upcoming Steam games and record game_updates changes.")
     parser.add_argument("--limit", type=int, default=80)
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    result = run_backfill(limit=args.limit)
+    result = run_refresh(limit=args.limit)
     print(
-        "steam-metadata-backfill completed: "
+        "steam-tracked-refresh completed: "
         f"status={result.status} processed={result.processed_count} failed={result.failed_count}"
     )
     return 1 if result.status == "failed" else 0

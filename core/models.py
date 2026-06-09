@@ -23,6 +23,7 @@ class StoreLink:
     wishlist_available: bool | None = None
     demo_available: bool | None = None
     release_date_text: str | None = None
+    affiliate_url: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

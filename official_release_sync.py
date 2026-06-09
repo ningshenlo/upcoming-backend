@@ -13,7 +13,7 @@ from core.neon import NeonStore
 from core.r2 import RawArchive
 
 
-DEFAULT_COLLECTORS = ["steam", "nintendo", "playstation"]
+DEFAULT_COLLECTORS = ["steam", "nintendo", "playstation", "xbox", "epic", "gog"]
 SOURCE_FAILURE_THRESHOLD = 3
 
 
@@ -164,7 +164,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--collectors",
         default=",".join(DEFAULT_COLLECTORS),
-        help="Comma-separated collector names. Default: steam,nintendo,playstation",
+        help="Comma-separated collector names. Default: steam,nintendo,playstation,xbox,epic,gog",
     )
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--dry-run", action="store_true")
