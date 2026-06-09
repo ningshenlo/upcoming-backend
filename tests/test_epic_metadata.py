@@ -28,7 +28,7 @@ class EpicMetadataTest(unittest.TestCase):
                                     "seller": {"id": "seller-1", "name": "Example Seller"},
                                     "productSlug": None,
                                     "urlSlug": "fallback-slug",
-                                    "tags": [{"id": "tag-1"}, {"id": "tag-2"}],
+                                    "tags": [{"id": "1296"}, {"id": "1393"}],
                                     "customAttributes": [{"key": "com.epicgames.app.productSlug", "value": "example"}],
                                     "categories": [{"path": "games"}, {"path": "games/edition/base"}],
                                     "catalogNs": {
@@ -64,7 +64,8 @@ class EpicMetadataTest(unittest.TestCase):
                         }
                     }
                 }
-            }
+            },
+            tag_names_by_id={"1296": "Casual", "1393": "Simulation"},
         )
 
         self.assertEqual(len(games), 1)
@@ -93,7 +94,8 @@ class EpicMetadataTest(unittest.TestCase):
         self.assertEqual(link.release_date_text, "2027-06-12T15:00:00.000Z")
         self.assertEqual(link.metadata["namespace"], "namespace-1")
         self.assertEqual(link.metadata["categories"], ["games", "games/edition/base"])
-        self.assertEqual(link.metadata["tags"], ["tag-1", "tag-2"])
+        self.assertEqual(link.metadata["tagIds"], ["1296", "1393"])
+        self.assertEqual(link.metadata["tags"], ["Casual", "Simulation"])
 
 
 if __name__ == "__main__":

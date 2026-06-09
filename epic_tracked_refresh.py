@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from collectors.epic import fetch_offer_payload, parse_offer_payload
+from collectors.epic import fetch_catalog_tag_names, fetch_offer_payload, parse_offer_payload
 from core.config import load_settings
 from core.job_logger import finish_job, resolve_job_status, start_job
 from core.models import CollectedGame
@@ -36,13 +36,14 @@ def run_refresh(limit: int) -> RefreshResult:
             },
         )
         rows = _tracked_epic_rows(store, limit)
+        tag_names_by_id = fetch_catalog_tag_names(settings.user_agent) if rows else {}
         for row in rows:
             namespace, offer_id = _offer_identity(row)
             try:
                 if not namespace or not offer_id:
                     raise RuntimeError("Epic row is missing namespace or offer id")
                 payload = fetch_offer_payload(namespace, offer_id, settings.user_agent)
-                game = _matching_game(parse_offer_payload(payload), row)
+                game = _matching_game(parse_offer_payload(payload, tag_names_by_id=tag_names_by_id), row)
                 job.processed_count += 1
                 if game is None:
                     job.skipped_count += 1

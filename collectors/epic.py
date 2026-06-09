@@ -184,6 +184,16 @@ EPIC_CATALOG_OFFER_QUERY = """query catalogOfferQuery($namespace: String!, $id: 
     }
   }
 }"""
+EPIC_CATALOG_TAGS_QUERY = """query catalogTags($namespace: String!) {
+  Catalog {
+    tags(namespace: $namespace, start: 0, count: 999) {
+      elements {
+        id
+        name
+      }
+    }
+  }
+}"""
 
 
 def collect(limit: int, user_agent: str) -> CollectorResult:
@@ -199,11 +209,12 @@ def collect(limit: int, user_agent: str) -> CollectorResult:
     pages: list[dict[str, Any]] = []
     seen: set[str] = set()
     start = 0
+    tag_names_by_id = fetch_catalog_tag_names(user_agent)
 
     while len(games) < limit:
         payload = fetch_search_page(start=start, count=EPIC_PAGE_SIZE, user_agent=user_agent)
         pages.append({"start": start, "payload": payload})
-        page_games = parse_search_payload(payload)
+        page_games = parse_search_payload(payload, tag_names_by_id=tag_names_by_id)
         if not page_games:
             break
 
@@ -287,14 +298,33 @@ def fetch_offer_payload(namespace: str, offer_id: str, user_agent: str) -> Any:
     )
 
 
-def parse_search_payload(payload: Any) -> list[CollectedGame]:
+def fetch_catalog_tag_names(user_agent: str) -> dict[str, str]:
+    payload = _post_graphql(
+        "catalogTags",
+        EPIC_CATALOG_TAGS_QUERY,
+        {"namespace": "epic"},
+        referer=EPIC_BROWSE_URL,
+        user_agent=user_agent,
+    )
+    return _catalog_tag_names(payload)
+
+
+def parse_search_payload(payload: Any, tag_names_by_id: dict[str, str] | None = None) -> list[CollectedGame]:
     search_store = _search_store_payload(payload)
-    return _games_from_offers(search_store.get("elements"), metadata_source="epic_search_store")
+    return _games_from_offers(
+        search_store.get("elements"),
+        metadata_source="epic_search_store",
+        tag_names_by_id=tag_names_by_id,
+    )
 
 
-def parse_offer_payload(payload: Any) -> list[CollectedGame]:
+def parse_offer_payload(payload: Any, tag_names_by_id: dict[str, str] | None = None) -> list[CollectedGame]:
     catalog_offer = (((payload or {}).get("data") or {}).get("Catalog") or {}).get("catalogOffer")
-    return _games_from_offers([catalog_offer], metadata_source="epic_catalog_offer")
+    return _games_from_offers(
+        [catalog_offer],
+        metadata_source="epic_catalog_offer",
+        tag_names_by_id=tag_names_by_id,
+    )
 
 
 def _post_graphql(
@@ -335,7 +365,26 @@ def _search_store_payload(payload: Any) -> dict[str, Any]:
     return search_store if isinstance(search_store, dict) else {}
 
 
-def _games_from_offers(value: Any, metadata_source: str) -> list[CollectedGame]:
+def _catalog_tag_names(payload: Any) -> dict[str, str]:
+    tags = ((((payload or {}).get("data") or {}).get("Catalog") or {}).get("tags") or {}).get("elements")
+    if not isinstance(tags, list):
+        return {}
+    result: dict[str, str] = {}
+    for item in tags:
+        if not isinstance(item, dict):
+            continue
+        tag_id = _string_value(item.get("id"))
+        name = _clean_text(item.get("name"))
+        if tag_id and name:
+            result[tag_id] = name
+    return result
+
+
+def _games_from_offers(
+    value: Any,
+    metadata_source: str,
+    tag_names_by_id: dict[str, str] | None = None,
+) -> list[CollectedGame]:
     if not isinstance(value, list):
         return []
     games: list[CollectedGame] = []
@@ -343,7 +392,7 @@ def _games_from_offers(value: Any, metadata_source: str) -> list[CollectedGame]:
     for offer in value:
         if not isinstance(offer, dict):
             continue
-        game = _game_from_offer(offer, metadata_source)
+        game = _game_from_offer(offer, metadata_source, tag_names_by_id)
         if not game:
             continue
         key = _game_identity(game)
@@ -354,7 +403,11 @@ def _games_from_offers(value: Any, metadata_source: str) -> list[CollectedGame]:
     return games
 
 
-def _game_from_offer(offer: dict[str, Any], metadata_source: str) -> CollectedGame | None:
+def _game_from_offer(
+    offer: dict[str, Any],
+    metadata_source: str,
+    tag_names_by_id: dict[str, str] | None,
+) -> CollectedGame | None:
     offer_id = _string_value(offer.get("id"))
     namespace = _string_value(offer.get("namespace"))
     title = _clean_text(offer.get("title"))
@@ -373,7 +426,8 @@ def _game_from_offer(offer: dict[str, Any], metadata_source: str) -> CollectedGa
     release_date, date_accuracy = _release_date(offer)
     release_date_text = _string_value(offer.get("releaseDate") or offer.get("pcReleaseDate"))
     price_text, price, currency = _price_info(offer)
-    tags = _tag_ids(offer)
+    tag_ids = _tag_ids(offer)
+    tags = _tag_names(tag_ids, tag_names_by_id)
     categories = _category_paths(offer)
     image_map = _image_map(offer)
     external_ids = {
@@ -411,6 +465,7 @@ def _game_from_offer(offer: dict[str, Any], metadata_source: str) -> CollectedGa
                 "productSlug": _string_value(offer.get("productSlug")),
                 "urlSlug": _string_value(offer.get("urlSlug")),
                 "categories": categories,
+                "tagIds": tag_ids,
                 "tags": tags,
                 "seller": _seller(offer),
                 "customAttributes": _custom_attributes(offer),
@@ -593,6 +648,11 @@ def _tag_ids(offer: dict[str, Any]) -> list[str]:
     if not isinstance(tags, list):
         return []
     values = [_string_value(item.get("id")) for item in tags if isinstance(item, dict)]
+    return [value for value in list(dict.fromkeys(values)) if value]
+
+
+def _tag_names(tag_ids: list[str], tag_names_by_id: dict[str, str] | None) -> list[str]:
+    values = tag_ids if tag_names_by_id is None else [tag_names_by_id.get(tag_id) for tag_id in tag_ids]
     return [value for value in list(dict.fromkeys(values)) if value]
 
 

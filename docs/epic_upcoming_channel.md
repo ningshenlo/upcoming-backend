@@ -86,7 +86,8 @@ The collector stores:
 - `price.totalPrice` -> `store_links.price`, `currency`, `price_text`
 - `prePurchase` -> `store_links.preorder_available`
 - `categories[].path` -> `store_links.metadata.categories`
-- `tags[].id` -> `store_links.metadata.tags`
+- `tags[].id` -> `store_links.metadata.tagIds`
+- `Catalog.tags.elements[].name` matched by id -> `store_links.metadata.tags`
 - `keyImages` -> cover/header/screenshot image fields
 
 Platform mapping is fixed for this channel:
