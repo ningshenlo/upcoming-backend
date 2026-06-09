@@ -1,0 +1,44 @@
+x-scraper: &scraper
+  build:
+    context: .
+  env_file:
+    - .env
+  volumes:
+    - ./var/raw:/app/var/raw
+
+services:
+  check-config:
+    <<: *scraper
+    command: ["python", "official_release_sync.py", "--check-config"]
+
+  official-release-sync:
+    <<: *scraper
+    command:
+      [
+        "python",
+        "official_release_sync.py",
+        "--collectors",
+        "${OFFICIAL_RELEASE_COLLECTORS:-steam,nintendo,playstation}",
+        "--limit",
+        "${OFFICIAL_RELEASE_LIMIT:-50}"
+      ]
+
+  igdb-discovery-sync:
+    <<: *scraper
+    command:
+      [
+        "python",
+        "igdb_discovery_sync.py",
+        "--limit",
+        "${IGDB_DISCOVERY_LIMIT:-50}"
+      ]
+
+  steam-metadata-backfill:
+    <<: *scraper
+    command:
+      [
+        "python",
+        "steam_metadata_backfill.py",
+        "--limit",
+        "${STEAM_METADATA_BACKFILL_LIMIT:-80}"
+      ]
