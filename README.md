@@ -24,6 +24,10 @@ For IGDB discovery also fill:
 - `IGDB_CLIENT_ID`
 - `IGDB_ACCESS_TOKEN`
 
+For YouTube hot tracking also fill:
+
+- `YOUTUBE_API_KEY`
+
 Production should keep `REQUIRE_R2_ARCHIVE=1` and `R2_WRANGLER_UPLOAD=0`.
 
 ## Docker
@@ -103,6 +107,13 @@ docker run --rm --env-file .env upcoming-games-scraper \
   python tracked/gog_tracked_refresh.py --limit 80
 ```
 
+Run hot tracker:
+
+```bash
+docker run --rm --env-file .env upcoming-games-scraper \
+  python hot_tracker.py --channels youtube --discover-limit 80 --refresh-limit 500
+```
+
 ## Docker Compose
 
 Check config:
@@ -123,6 +134,7 @@ docker compose run --rm nintendo-tracked-refresh
 docker compose run --rm xbox-tracked-refresh
 docker compose run --rm epic-tracked-refresh
 docker compose run --rm gog-tracked-refresh
+docker compose run --rm hot-tracker
 ```
 
 The compose file mounts `./var/raw` into `/app/var/raw` for local fallback archives and Wrangler temp files.

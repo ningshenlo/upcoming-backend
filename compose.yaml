@@ -102,3 +102,19 @@ services:
         "--limit",
         "${GOG_TRACKED_REFRESH_LIMIT:-80}"
       ]
+
+  hot-tracker:
+    <<: *scraper
+    command:
+      [
+        "python",
+        "hot_tracker.py",
+        "--channels",
+        "${HOT_TRACKER_CHANNELS:-youtube}",
+        "--discover-limit",
+        "${HOT_TRACKER_DISCOVERY_LIMIT:-80}",
+        "--refresh-limit",
+        "${HOT_TRACKER_REFRESH_LIMIT:-500}",
+        "--rediscovery-days",
+        "${HOT_TRACKER_REDISCOVERY_DAYS:-7}"
+      ]

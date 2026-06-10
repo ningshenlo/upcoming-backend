@@ -8,6 +8,7 @@ from pathlib import Path
 @dataclass(frozen=True)
 class Settings:
     database_url: str | None
+    youtube_api_key: str | None
     raw_archive_dir: Path
     r2_bucket_name: str | None
     r2_endpoint_url: str | None
@@ -42,6 +43,7 @@ def load_settings() -> Settings:
     r2_use_wrangler = os.environ.get("R2_WRANGLER_UPLOAD", "").lower() in {"1", "true", "yes"}
     return Settings(
         database_url=os.environ.get("DATABASE_URL"),
+        youtube_api_key=os.environ.get("YOUTUBE_API_KEY"),
         raw_archive_dir=Path(os.environ.get("RAW_ARCHIVE_DIR", "var/raw")),
         r2_bucket_name=os.environ.get("R2_BUCKET_NAME"),
         r2_endpoint_url=_r2_endpoint_url(),
