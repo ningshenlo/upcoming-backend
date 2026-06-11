@@ -12,4 +12,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 RUN mkdir -p /app/var/raw
 
-CMD ["python", "official_release_sync.py", "--check-config"]
+CMD ["python", "scheduler.py"]
