@@ -41,6 +41,7 @@ def run_refresh(limit: int) -> RefreshResult:
             },
         )
         rows = _tracked_epic_rows(store, limit)
+        print(f"中文日志：Epic 追踪刷新找到 {len(rows)} 个待刷新游戏，limit={limit}", flush=True)
         tag_names_by_id = fetch_catalog_tag_names(settings.user_agent) if rows else {}
         for row in rows:
             namespace, offer_id = _offer_identity(row)
@@ -68,6 +69,10 @@ def run_refresh(limit: int) -> RefreshResult:
         error_message = "; ".join(item["message"] for item in job.errors[:3]) if job.errors else None
         finish_job(store, job, status, error_message=error_message)
         record_refresh_source_status(store, "epic", job.job_id, status, error_message)
+        print(
+            f"中文日志：Epic 追踪刷新完成，状态={status}，处理={job.processed_count}，失败={job.error_count}",
+            flush=True,
+        )
         return RefreshResult(status=status, processed_count=job.processed_count, failed_count=job.error_count)
 
 

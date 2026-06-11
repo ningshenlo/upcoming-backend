@@ -209,10 +209,15 @@ def _latest_job_run(store: NeonStore, job: ScheduledJob) -> LastJobRun | None:
 
 
 def _run_job(store: NeonStore, job: ScheduledJob, timeout_minutes: int) -> JobExecution:
-    print(f"scheduler: running {job.key}: {' '.join(job.command)}", flush=True)
+    print(f"scheduler: running {job.key}: {' '.join(job.command)} | 调度器：开始执行任务 {job.key}", flush=True)
     started_at = datetime.now(timezone.utc)
     try:
-        completed = subprocess.run(job.command, check=False, timeout=timeout_minutes * 60)
+        completed = subprocess.run(
+            job.command,
+            check=False,
+            timeout=timeout_minutes * 60,
+            stderr=subprocess.STDOUT,
+        )
     except subprocess.TimeoutExpired as exc:
         message = f"Scheduled job timed out after {timeout_minutes} minutes."
         _record_scheduler_failure(store, job.key, message)
@@ -297,15 +302,15 @@ def run_loop(jobs: Sequence[ScheduledJob], tick_seconds: int, timeout_minutes: i
 def _print_executions(executions: Sequence[JobExecution]) -> None:
     for execution in executions:
         if not execution.due:
-            print(f"scheduler: skipped {execution.job.key}; not due", flush=True)
+            print(f"scheduler: skipped {execution.job.key}; not due | 调度器：跳过任务 {execution.job.key}，尚未到执行时间", flush=True)
             continue
         if not execution.ran:
-            print(f"scheduler: due {execution.job.key}; dry-run only", flush=True)
+            print(f"scheduler: due {execution.job.key}; dry-run only | 调度器：任务 {execution.job.key} 已到期，当前为演练模式", flush=True)
             continue
         if execution.exit_code == 0:
-            print(f"scheduler: completed {execution.job.key}", flush=True)
+            print(f"scheduler: completed {execution.job.key} | 调度器：任务 {execution.job.key} 执行完成", flush=True)
         else:
-            print(f"scheduler: failed {execution.job.key}: {execution.error_message}", file=sys.stderr, flush=True)
+            print(f"scheduler: failed {execution.job.key}: {execution.error_message} | 调度器：任务 {execution.job.key} 执行失败", file=sys.stderr, flush=True)
 
 
 def _int_env(env: Mapping[str, str], name: str, default: int) -> int:
