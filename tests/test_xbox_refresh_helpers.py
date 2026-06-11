@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from core.models import CollectedGame, StoreLink
-from xbox_tracked_refresh import _matching_game
+from tracked.xbox_tracked_refresh import _matching_game
 
 
 class XboxRefreshHelpersTest(unittest.TestCase):

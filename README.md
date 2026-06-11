@@ -69,35 +69,35 @@ Run Steam tracked refresh:
 
 ```bash
 docker run --rm --env-file .env upcoming-games-scraper \
-  python steam_tracked_refresh.py --limit 80
+  python tracked/steam_tracked_refresh.py --limit 80
 ```
 
 Run PlayStation tracked refresh:
 
 ```bash
 docker run --rm --env-file .env upcoming-games-scraper \
-  python playstation_tracked_refresh.py --limit 80
+  python tracked/playstation_tracked_refresh.py --limit 80
 ```
 
 Run Nintendo tracked refresh:
 
 ```bash
 docker run --rm --env-file .env upcoming-games-scraper \
-  python nintendo_tracked_refresh.py --limit 80
+  python tracked/nintendo_tracked_refresh.py --limit 80
 ```
 
 Run Xbox tracked refresh:
 
 ```bash
 docker run --rm --env-file .env upcoming-games-scraper \
-  python xbox_tracked_refresh.py --limit 80
+  python tracked/xbox_tracked_refresh.py --limit 80
 ```
 
 Run Epic tracked refresh:
 
 ```bash
 docker run --rm --env-file .env upcoming-games-scraper \
-  python epic_tracked_refresh.py --limit 80
+  python tracked/epic_tracked_refresh.py --limit 80
 ```
 
 Run GOG tracked refresh:
@@ -114,12 +114,25 @@ docker run --rm --env-file .env upcoming-games-scraper \
   python hot_tracker.py --channels youtube --discover-limit 80 --refresh-limit 500
 ```
 
+Run scheduler:
+
+```bash
+docker run --rm --env-file .env upcoming-games-scraper \
+  python scheduler.py
+```
+
 ## Docker Compose
 
 Check config:
 
 ```bash
 docker compose run --rm check-config
+```
+
+Run scheduler:
+
+```bash
+docker compose up -d scheduler
 ```
 
 Run jobs:
@@ -138,3 +151,15 @@ docker compose run --rm hot-tracker
 ```
 
 The compose file mounts `./var/raw` into `/app/var/raw` for local fallback archives and Wrangler temp files.
+
+## Scheduler
+
+The scheduler runs the same one-shot jobs above on configurable intervals. Defaults are:
+
+- official source discovery every 12 hours
+- IGDB discovery once per day
+- each tracked channel refresh every 6 hours
+- hot tracker once per day
+
+Set `*_ENABLED=0` to disable a job, and adjust `*_INTERVAL_MINUTES` to change its cadence.
+Use `python scheduler.py --list-jobs` to inspect the configured jobs without running them.

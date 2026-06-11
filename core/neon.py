@@ -1660,12 +1660,23 @@ class NeonStore(AbstractContextManager["NeonStore"]):
         with self.conn.cursor() as cur:
             cur.execute(
                 """
-                UPDATE sources
-                SET consecutive_failures = 0,
-                    last_fetched_at = now(),
-                    last_successful_fetch_at = now(),
+                WITH updated_source AS (
+                  UPDATE sources
+                  SET consecutive_failures = 0,
+                      last_fetched_at = now(),
+                      last_successful_fetch_at = now(),
+                      updated_at = now()
+                  WHERE slug = %s
+                  RETURNING id
+                )
+                UPDATE alerts
+                SET status = 'resolved',
+                    resolved_at = now(),
+                    resolution_note = 'Source fetch succeeded after previous failure.',
                     updated_at = now()
-                WHERE slug = %s
+                WHERE alert_type = 'source_failure'
+                  AND status = 'open'
+                  AND source_id IN (SELECT id FROM updated_source)
                 """,
                 (source_slug,),
             )
@@ -1694,30 +1705,55 @@ class NeonStore(AbstractContextManager["NeonStore"]):
             if not row:
                 return
             source_id, source_name, failure_count = row
-            if failure_count < threshold:
-                return
+            severity = "critical" if failure_count >= threshold else "warning"
             cur.execute(
                 """
+                WITH existing_alert AS (
+                  SELECT id
+                  FROM alerts
+                  WHERE alert_type = 'source_failure'
+                    AND source_id = %s
+                    AND status = 'open'
+                  ORDER BY created_at DESC
+                  LIMIT 1
+                ),
+                updated_alert AS (
+                  UPDATE alerts
+                  SET severity = %s,
+                      title = 'Source failure',
+                      description = %s,
+                      data_job_id = %s,
+                      conflict_detail = %s,
+                      updated_at = now()
+                  WHERE id IN (SELECT id FROM existing_alert)
+                  RETURNING id
+                )
                 INSERT INTO alerts (
                     alert_type, severity, title, description,
                     source_id, data_job_id, conflict_detail
                 )
                 SELECT
                     'source_failure',
-                    'critical',
-                    'Source consecutive failures',
+                    %s,
+                    'Source failure',
                     %s,
                     %s,
                     %s,
                     %s
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM alerts
-                    WHERE alert_type = 'source_failure'
-                      AND source_id = %s
-                      AND status = 'open'
-                )
+                WHERE NOT EXISTS (SELECT 1 FROM updated_alert)
                 """,
                 (
+                    source_id,
+                    severity,
+                    f"{source_name} failed {failure_count} consecutive times.",
+                    data_job_id,
+                    _json({
+                        "sourceSlug": source_slug,
+                        "failureCount": failure_count,
+                        "threshold": threshold,
+                        "lastError": error_message,
+                    }),
+                    severity,
                     f"{source_name} failed {failure_count} consecutive times.",
                     source_id,
                     data_job_id,
@@ -1727,6 +1763,72 @@ class NeonStore(AbstractContextManager["NeonStore"]):
                         "threshold": threshold,
                         "lastError": error_message,
                     }),
-                    source_id,
                 ),
+            )
+
+    def record_scheduler_failure(self, job_key: str, error_message: str, severity: str = "critical") -> None:
+        assert self.conn is not None
+        with self.conn.cursor() as cur:
+            detail = {
+                "jobKey": job_key,
+                "lastError": error_message,
+            }
+            cur.execute(
+                """
+                WITH existing_alert AS (
+                  SELECT id
+                  FROM alerts
+                  WHERE alert_type = 'scheduler_failure'
+                    AND status = 'open'
+                    AND conflict_detail->>'jobKey' = %s
+                  ORDER BY created_at DESC
+                  LIMIT 1
+                ),
+                updated_alert AS (
+                  UPDATE alerts
+                  SET severity = %s,
+                      title = 'Scheduler failure',
+                      description = %s,
+                      conflict_detail = COALESCE(conflict_detail, '{}'::jsonb) || %s::jsonb,
+                      updated_at = now()
+                  WHERE id IN (SELECT id FROM existing_alert)
+                  RETURNING id
+                )
+                INSERT INTO alerts (
+                    alert_type, severity, title, description, conflict_detail
+                )
+                SELECT
+                    'scheduler_failure',
+                    %s,
+                    'Scheduler failure',
+                    %s,
+                    %s
+                WHERE NOT EXISTS (SELECT 1 FROM updated_alert)
+                """,
+                (
+                    job_key,
+                    severity,
+                    f"Scheduled job {job_key} failed before the collector could complete.",
+                    _json(detail),
+                    severity,
+                    f"Scheduled job {job_key} failed before the collector could complete.",
+                    _json(detail),
+                ),
+            )
+
+    def record_scheduler_success(self, job_key: str) -> None:
+        assert self.conn is not None
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE alerts
+                SET status = 'resolved',
+                    resolved_at = now(),
+                    resolution_note = 'Scheduled job completed successfully after previous scheduler failure.',
+                    updated_at = now()
+                WHERE alert_type = 'scheduler_failure'
+                  AND status = 'open'
+                  AND conflict_detail->>'jobKey' = %s
+                """,
+                (job_key,),
             )

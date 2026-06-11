@@ -11,6 +11,11 @@ services:
     <<: *scraper
     command: ["python", "official_release_sync.py", "--check-config"]
 
+  scheduler:
+    <<: *scraper
+    restart: unless-stopped
+    command: ["python", "scheduler.py"]
+
   official-release-sync:
     <<: *scraper
     command:
@@ -48,7 +53,7 @@ services:
     command:
       [
         "python",
-        "steam_tracked_refresh.py",
+        "tracked/steam_tracked_refresh.py",
         "--limit",
         "${STEAM_TRACKED_REFRESH_LIMIT:-80}"
       ]
@@ -58,7 +63,7 @@ services:
     command:
       [
         "python",
-        "playstation_tracked_refresh.py",
+        "tracked/playstation_tracked_refresh.py",
         "--limit",
         "${PLAYSTATION_TRACKED_REFRESH_LIMIT:-80}"
       ]
@@ -68,7 +73,7 @@ services:
     command:
       [
         "python",
-        "nintendo_tracked_refresh.py",
+        "tracked/nintendo_tracked_refresh.py",
         "--limit",
         "${NINTENDO_TRACKED_REFRESH_LIMIT:-80}"
       ]
@@ -78,7 +83,7 @@ services:
     command:
       [
         "python",
-        "xbox_tracked_refresh.py",
+        "tracked/xbox_tracked_refresh.py",
         "--limit",
         "${XBOX_TRACKED_REFRESH_LIMIT:-80}"
       ]
@@ -88,7 +93,7 @@ services:
     command:
       [
         "python",
-        "epic_tracked_refresh.py",
+        "tracked/epic_tracked_refresh.py",
         "--limit",
         "${EPIC_TRACKED_REFRESH_LIMIT:-80}"
       ]

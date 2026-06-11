@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from core.models import CollectedGame, StoreLink
-from epic_tracked_refresh import _matching_game, _offer_identity
+from tracked.epic_tracked_refresh import _matching_game, _offer_identity
 
 
 class EpicRefreshHelpersTest(unittest.TestCase):

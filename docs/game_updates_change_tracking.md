@@ -50,17 +50,17 @@
 
 ## 主动追踪任务
 
-新增脚本：`steam_tracked_refresh.py`
-新增脚本：`playstation_tracked_refresh.py`
+新增脚本：`tracked/steam_tracked_refresh.py`
+新增脚本：`tracked/playstation_tracked_refresh.py`
 
 它们和普通发现型 collector 的分工不同：
 
 - `official_release_sync.py --collectors steam`：从 Steam coming soon 搜索页发现和同步一批游戏。
-- `steam_tracked_refresh.py`：从数据库读取已经收录的 upcoming Steam app id，逐个请求 Steam appdetails 和商店页，刷新旧游戏。
+- `tracked/steam_tracked_refresh.py`：从数据库读取已经收录的 upcoming Steam app id，逐个请求 Steam appdetails 和商店页，刷新旧游戏。
 - `official_release_sync.py --collectors playstation`：从 PlayStation Store coming soon 分类发现和同步一批游戏。
-- `playstation_tracked_refresh.py`：从数据库读取已经收录的 upcoming PlayStation concept id，逐个请求 PlayStation concept detail 和商店页，刷新旧游戏。
+- `tracked/playstation_tracked_refresh.py`：从数据库读取已经收录的 upcoming PlayStation concept id，逐个请求 PlayStation concept detail 和商店页，刷新旧游戏。
 - `official_release_sync.py --collectors xbox`：从 Xbox Games Coming Soon 官方页和 Emerald 前端服务发现和同步一批游戏。
-- `xbox_tracked_refresh.py`：从数据库读取已经收录的 upcoming Xbox product id，逐个请求 Xbox product endpoint，刷新旧游戏。
+- `tracked/xbox_tracked_refresh.py`：从数据库读取已经收录的 upcoming Xbox product id，逐个请求 Xbox product endpoint，刷新旧游戏。
 
 主动追踪脚本会复用对应渠道的 parser 和 `NeonStore.upsert_collected_game()`，因此会自然触发 `game_updates` 差异检测。
 

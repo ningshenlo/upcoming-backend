@@ -109,7 +109,7 @@ store_link.id = "xbox_store:{productId}"
 
 ## Active tracking
 
-`xbox_tracked_refresh.py` queries existing upcoming games with `store_links.store_name = 'xbox_store'`.
+`tracked/xbox_tracked_refresh.py` queries existing upcoming games with `store_links.store_name = 'xbox_store'`.
 
 For each row it:
 

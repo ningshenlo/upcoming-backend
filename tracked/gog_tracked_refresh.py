@@ -14,6 +14,7 @@ from core.config import load_settings
 from core.job_logger import finish_job, resolve_job_status, start_job
 from core.models import CollectedGame
 from core.neon import NeonStore
+from tracked.common import record_refresh_source_status
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,7 @@ def run_refresh(limit: int) -> RefreshResult:
         status = resolve_job_status(job)
         error_message = "; ".join(item["message"] for item in job.errors[:3]) if job.errors else None
         finish_job(store, job, status, error_message=error_message)
+        record_refresh_source_status(store, "gog", job.job_id, status, error_message)
         return RefreshResult(status=status, processed_count=job.processed_count, failed_count=job.error_count)
 
 

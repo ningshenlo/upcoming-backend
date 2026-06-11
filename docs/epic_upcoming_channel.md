@@ -104,7 +104,7 @@ store_link.id = "epic_games_store:{productId}"
 
 ## Active tracking
 
-`epic_tracked_refresh.py` queries existing upcoming games with `store_links.store_name = 'epic_games_store'`.
+`tracked/epic_tracked_refresh.py` queries existing upcoming games with `store_links.store_name = 'epic_games_store'`.
 
 For each row it:
 

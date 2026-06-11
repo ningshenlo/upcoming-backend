@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from core.models import CollectedGame
-from nintendo_tracked_refresh import _matching_game
+from tracked.nintendo_tracked_refresh import _matching_game
 
 
 class NintendoRefreshHelpersTest(unittest.TestCase):

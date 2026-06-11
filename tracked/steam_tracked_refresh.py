@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from collectors.steam import STEAM_APPDETAILS_URL, STEAM_APP_PAGE_URL, apply_app_page_tags, apply_appdetails, parse_app_page_tags
 from core.config import load_settings
@@ -11,6 +15,7 @@ from core.http_client import fetch_json, fetch_text
 from core.job_logger import finish_job, resolve_job_status, start_job
 from core.neon import NeonStore
 from steam_metadata_backfill import _row_to_game
+from tracked.common import record_refresh_source_status
 
 
 @dataclass(frozen=True)
@@ -63,6 +68,7 @@ def run_refresh(limit: int) -> RefreshResult:
         status = resolve_job_status(job)
         error_message = "; ".join(item["message"] for item in job.errors[:3]) if job.errors else None
         finish_job(store, job, status, error_message=error_message)
+        record_refresh_source_status(store, "steam", job.job_id, status, error_message)
         return RefreshResult(status=status, processed_count=job.processed_count, failed_count=job.error_count)
 
 

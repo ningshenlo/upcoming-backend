@@ -48,7 +48,7 @@ The collector also writes a `StoreLink` with:
 
 ## Active tracking
 
-`nintendo_tracked_refresh.py` queries existing upcoming games with `store_links.store_name = 'nintendo_eshop'`.
+`tracked/nintendo_tracked_refresh.py` queries existing upcoming games with `store_links.store_name = 'nintendo_eshop'`.
 
 For each tracked product it:
 
