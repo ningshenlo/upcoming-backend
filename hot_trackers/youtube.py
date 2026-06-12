@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import json
 import re
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from core.config import Settings
-from core.http_client import FetchError, fetch_json
+from core.http_client import FetchError, fetch_json, fetch_json_post
 from core.job_logger import finish_job, resolve_job_status, start_job
 from core.neon import NeonStore
 
@@ -15,6 +17,8 @@ YOUTUBE_SOURCE_SLUG = "youtube"
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 YOUTUBE_VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 YOUTUBE_WATCH_URL = "https://www.youtube.com/watch?v={video_id}"
+DATAFORSEO_YOUTUBE_TASK_POST_URL = "https://api.dataforseo.com/v3/serp/youtube/organic/task_post"
+DATAFORSEO_YOUTUBE_TASK_SOURCE = "serp/youtube/organic/task_post"
 YOUTUBE_BATCH_SIZE = 50
 SEARCH_MAX_RESULTS = 10
 
@@ -102,8 +106,10 @@ def run(
 ) -> YouTubeRunResult:
     if not settings.database_url:
         raise RuntimeError("DATABASE_URL is required for hot tracker")
-    if not settings.youtube_api_key:
+    if refresh_limit > 0 and not settings.youtube_api_key:
         raise RuntimeError("YOUTUBE_API_KEY is required for YouTube hot tracking")
+    if discover_limit > 0 and not settings.dataforseo_api_key:
+        raise RuntimeError("DFS or DATAFORSEO_API_KEY is required for YouTube discovery")
 
     with NeonStore(settings.database_url) as store:
         job = start_job(
@@ -118,9 +124,17 @@ def run(
                 "startedAt": datetime.now(timezone.utc).isoformat(),
             },
         )
+        print(
+            "youtube hot tracker: started "
+            f"job_id={job.job_id} discover_limit={discover_limit} refresh_limit={refresh_limit} "
+            f"rediscovery_days={rediscovery_days}",
+            flush=True,
+        )
         _ensure_youtube_source(store)
 
-        for row in _discoverable_game_rows(store, discover_limit, rediscovery_days):
+        discovery_rows = _discoverable_game_rows(store, discover_limit, rediscovery_days)
+        print(f"youtube hot tracker: discovery candidates={len(discovery_rows)}", flush=True)
+        for row in discovery_rows:
             try:
                 job.processed_count += 1
                 result = _discover_game(store, row, settings)
@@ -129,6 +143,12 @@ def run(
                 else:
                     job.updated_count += 1
                 if result.status == "error":
+                    print(
+                        "youtube hot tracker: discovery failed "
+                        f"game_id={row.id} title={row.title!r} error={result.error_message}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                     job.error_count += 1
                     job.errors.append(
                         {
@@ -147,16 +167,33 @@ def run(
                 except Exception:
                     store.reconnect()
 
-        for chunk in _chunks(_tracked_video_rows(store, refresh_limit), YOUTUBE_BATCH_SIZE):
+        tracked_rows = _tracked_video_rows(store, refresh_limit)
+        print(
+            "youtube hot tracker: refresh candidates="
+            f"{len(tracked_rows)} batch_size={YOUTUBE_BATCH_SIZE}",
+            flush=True,
+        )
+        for chunk in _chunks(tracked_rows, YOUTUBE_BATCH_SIZE):
             if not chunk:
                 continue
             try:
+                print(f"youtube hot tracker: refreshing stats batch_size={len(chunk)}", flush=True)
                 stats_by_id = fetch_youtube_video_stats(
                     [row.video_id for row in chunk],
                     api_key=settings.youtube_api_key,
                     user_agent=settings.user_agent,
                 )
+                print(
+                    "youtube hot tracker: refreshed stats "
+                    f"requested={len(chunk)} returned={len(stats_by_id)}",
+                    flush=True,
+                )
             except Exception as exc:
+                print(
+                    f"youtube hot tracker: refresh batch failed size={len(chunk)} error={exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 job.error_count += len(chunk)
                 job.errors.append({"phase": "refresh", "message": str(exc)})
                 continue
@@ -166,6 +203,11 @@ def run(
                     job.processed_count += 1
                     payload = stats_by_id.get(row.video_id)
                     if not payload:
+                        print(
+                            "youtube hot tracker: refresh skipped missing stats "
+                            f"game_id={row.game_id} video_id={row.video_id}",
+                            flush=True,
+                        )
                         job.skipped_count += 1
                         continue
                     _record_video_metrics(store, row, payload, job.job_id)
@@ -186,6 +228,13 @@ def run(
             store.record_source_failure(YOUTUBE_SOURCE_SLUG, job.job_id, error_message or "YouTube hot tracker failed")
         else:
             store.record_source_success(YOUTUBE_SOURCE_SLUG)
+        print(
+            "youtube hot tracker: finished "
+            f"job_id={job.job_id} status={status} processed={job.processed_count} "
+            f"created={job.created_count} updated={job.updated_count} skipped={job.skipped_count} "
+            f"errors={job.error_count}",
+            flush=True,
+        )
         return YouTubeRunResult(status=status, processed_count=job.processed_count, failed_count=job.error_count)
 
 
@@ -212,6 +261,10 @@ def extract_youtube_video_id(url: str | None) -> str | None:
 
 def build_discovery_query(title: str) -> str:
     return f"{title} official trailer"
+
+
+def dataforseo_youtube_task_source_for_game(game_id: str) -> str:
+    return f"{DATAFORSEO_YOUTUBE_TASK_SOURCE}:game_id={game_id}"
 
 
 def score_candidate(game: GameRow, candidate: YouTubeCandidate) -> YouTubeCandidate:
@@ -302,6 +355,31 @@ def search_youtube_candidates(query: str, api_key: str, user_agent: str) -> list
     return candidates
 
 
+def candidate_from_dataforseo_item(item: dict[str, Any]) -> YouTubeCandidate | None:
+    if item.get("type") != "youtube_video":
+        return None
+    if item.get("is_live") is True or item.get("is_shorts") is True:
+        return None
+
+    video_id = _string_value(item.get("video_id")) or extract_youtube_video_id(_string_value(item.get("url")))
+    if not video_id:
+        return None
+
+    video_url = _string_value(item.get("url")) or YOUTUBE_WATCH_URL.format(video_id=video_id)
+    return YouTubeCandidate(
+        video_id=video_id,
+        title=_string_value(item.get("title")),
+        description=_string_value(item.get("description")),
+        channel_id=_string_value(item.get("channel_id")),
+        channel_title=_string_value(item.get("channel_name")),
+        published_at=_string_value(item.get("timestamp")),
+        thumbnail_url=_string_value(item.get("thumbnail_url")),
+        video_url=video_url,
+        match_confidence=0,
+        match_reasons=[],
+    )
+
+
 def fetch_youtube_video_stats(video_ids: list[str], api_key: str, user_agent: str) -> dict[str, dict[str, Any]]:
     if not video_ids:
         return {}
@@ -329,6 +407,11 @@ def _discover_game(store: NeonStore, row: GameRow, settings: Settings) -> Discov
     query = build_discovery_query(row.title)
     trailer_video_id = extract_youtube_video_id(row.trailer_url)
     if trailer_video_id:
+        print(
+            "youtube hot tracker: using existing trailer_url "
+            f"game_id={row.id} title={row.title!r} video_id={trailer_video_id}",
+            flush=True,
+        )
         candidate = YouTubeCandidate(
             video_id=trailer_video_id,
             title=None,
@@ -345,22 +428,113 @@ def _discover_game(store: NeonStore, row: GameRow, settings: Settings) -> Discov
         return DiscoveryResult(created=created, status="found")
 
     try:
-        candidates = search_youtube_candidates(query, settings.youtube_api_key or "", settings.user_agent)
-        best = select_best_candidate(row, candidates)
+        print(
+            "youtube hot tracker: submitting dfs discovery "
+            f"game_id={row.id} title={row.title!r} query={query!r}",
+            flush=True,
+        )
+        created = submit_dataforseo_youtube_discovery_task(store, row, query, settings)
     except Exception as exc:
-        message = str(exc)
-        created = _upsert_tracked_video(store, row, None, query, "error", {"error": message})
-        return DiscoveryResult(created=created, status="error", error_message=message)
+        return DiscoveryResult(created=False, status="error", error_message=str(exc))
+    return DiscoveryResult(created=created, status="submitted")
 
-    metadata = {
-        "candidateCount": len(candidates),
-        "candidates": [_candidate_metadata(score_candidate(row, candidate)) for candidate in candidates[:5]],
+
+def submit_dataforseo_youtube_discovery_task(
+    store: NeonStore,
+    row: GameRow,
+    query: str,
+    settings: Settings,
+) -> bool:
+    source = dataforseo_youtube_task_source_for_game(row.id)
+    task = {
+        "keyword": query,
+        "location_code": settings.dataforseo_youtube_location_code,
+        "language_code": settings.dataforseo_youtube_language_code,
+        "device": "desktop",
+        "os": "windows",
+        "block_depth": settings.dataforseo_youtube_block_depth,
+        "priority": 1,
+        "tag": source,
     }
-    if best is None:
-        created = _upsert_tracked_video(store, row, None, query, "not_found", metadata)
-        return DiscoveryResult(created=created, status="not_found")
-    created = _upsert_tracked_video(store, row, best, query, "found", metadata)
-    return DiscoveryResult(created=created, status="found")
+    pingback_url = _dataforseo_pingback_url(settings.dataforseo_pingback_url)
+    if pingback_url:
+        task["pingback_url"] = pingback_url
+
+    payload = _post_dataforseo_tasks([task], settings)
+    tasks = payload.get("tasks") if isinstance(payload, dict) else None
+    task_payload = tasks[0] if isinstance(tasks, list) and tasks and isinstance(tasks[0], dict) else {}
+    task_id = _string_value(task_payload.get("id"))
+    task_status = task_payload.get("status_code")
+    if not task_id:
+        raise YouTubeApiError(f"DataForSEO task_post returned no task id: {payload.get('status_message')}")
+    if isinstance(task_status, int) and task_status >= 40000:
+        raise YouTubeApiError(f"DataForSEO task_post failed: {task_status} {task_payload.get('status_message')}")
+
+    inserted = _insert_dfstask(store, task_id, source)
+    print(
+        "youtube hot tracker: dfs task submitted "
+        f"game_id={row.id} task_id={task_id} inserted={inserted} "
+        f"pingback_configured={bool(pingback_url)}",
+        flush=True,
+    )
+    return inserted
+
+
+def _post_dataforseo_tasks(tasks: list[dict[str, Any]], settings: Settings) -> dict[str, Any]:
+    api_key = settings.dataforseo_api_key or ""
+    try:
+        payload = fetch_json_post(
+            DATAFORSEO_YOUTUBE_TASK_POST_URL,
+            json.dumps(tasks, ensure_ascii=False),
+            settings.user_agent,
+            headers={
+                "Authorization": _dataforseo_authorization_header(api_key),
+                "Content-Type": "application/json",
+            },
+            timeout=60,
+        )
+    except FetchError as exc:
+        raise YouTubeApiError(str(exc).replace(api_key, "[redacted]")) from exc
+
+    if not isinstance(payload, dict):
+        raise YouTubeApiError("DataForSEO task_post returned an invalid response")
+    if payload.get("status_code") != 20000:
+        raise YouTubeApiError(f"DataForSEO task_post failed: {payload.get('status_message')}")
+    return payload
+
+
+def _insert_dfstask(store: NeonStore, task_id: str, source: str) -> bool:
+    assert store.conn is not None
+    with store.conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO dfstasks (task_id, source, status, created_at, updated_at)
+            VALUES (%s, %s, 'submitted', now(), now())
+            ON CONFLICT (task_id) DO NOTHING
+            RETURNING task_id
+            """,
+            (task_id, source),
+        )
+        return cur.fetchone() is not None
+
+
+def _dataforseo_pingback_url(value: str | None) -> str | None:
+    if not value:
+        return None
+    pingback_url = value.strip()
+    if not pingback_url:
+        return None
+    if "$id" in pingback_url or "$tag" in pingback_url:
+        return pingback_url
+    separator = "&" if "?" in pingback_url else "?"
+    return f"{pingback_url}{separator}id=$id&tag=$tag"
+
+
+def _dataforseo_authorization_header(api_key: str) -> str:
+    value = api_key.strip()
+    if value.lower().startswith("basic "):
+        return value
+    return f"Basic {value}"
 
 
 def _ensure_youtube_source(store: NeonStore) -> None:
@@ -415,12 +589,10 @@ def _discoverable_game_rows(store: NeonStore, limit: int, rediscovery_days: int)
             FROM games g
             LEFT JOIN company_names cn ON cn.game_id = g.id
             LEFT JOIN youtube_tracked_videos ytv ON ytv.game_id = g.id
+            LEFT JOIN dfstasks dfs
+              ON dfs.source = %s || ':game_id=' || g.id
             WHERE ytv.id IS NULL
-               OR (
-                    ytv.discovery_status IN ('not_found', 'error')
-                AND COALESCE(ytv.last_discovered_at, '1970-01-01'::timestamptz)
-                    < now() - (%s * INTERVAL '1 day')
-               )
+              AND dfs.task_id IS NULL
             ORDER BY
               EXISTS (
                 SELECT 1
@@ -432,7 +604,7 @@ def _discoverable_game_rows(store: NeonStore, limit: int, rediscovery_days: int)
               g.updated_at ASC
             LIMIT %s
             """,
-            (rediscovery_days, limit),
+            (DATAFORSEO_YOUTUBE_TASK_SOURCE, limit),
         )
         return [
             GameRow(

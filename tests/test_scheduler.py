@@ -15,6 +15,8 @@ class SchedulerConfigTest(unittest.TestCase):
                 "STEAM_TRACKED_REFRESH_ENABLED": "0",
                 "STEAM_TRACKED_REFRESH_INTERVAL_MINUTES": "15",
                 "STEAM_TRACKED_REFRESH_LIMIT": "7",
+                "DFS": "example-key",
+                "DATAFORSEO_YOUTUBE_TASK_GET_LIMIT": "9",
             },
             python_executable="python",
         )}
@@ -24,6 +26,19 @@ class SchedulerConfigTest(unittest.TestCase):
         self.assertFalse(jobs["steam-tracked-refresh"].enabled)
         self.assertEqual(jobs["steam-tracked-refresh"].interval_minutes, 15)
         self.assertEqual(jobs["steam-tracked-refresh"].command, ("python", "tracked/steam_tracked_refresh.py", "--limit", "7"))
+        self.assertTrue(jobs["dataforseo-youtube-task-get"].enabled)
+        self.assertEqual(jobs["dataforseo-youtube-task-get"].interval_minutes, 5)
+        self.assertEqual(
+            jobs["dataforseo-youtube-task-get"].command,
+            ("python", "dataforseo_youtube_task_get.py", "--limit", "9"),
+        )
+
+    def test_build_jobs_uses_youtube_hot_tracker_defaults(self) -> None:
+        jobs = {job.key: job for job in build_jobs({}, python_executable="python")}
+
+        self.assertEqual(jobs["hot-tracker"].interval_minutes, 360)
+        self.assertIn("2000", jobs["hot-tracker"].command)
+        self.assertIn("5000", jobs["hot-tracker"].command)
 
     def test_job_not_due_before_interval(self) -> None:
         now = datetime(2026, 6, 11, 12, 0, tzinfo=timezone.utc)

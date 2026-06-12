@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from collectors.nintendo import parse_algolia_payload
+from collectors.nintendo import parse_algolia_payload, parse_store_page
 
 
 class NintendoMetadataTest(unittest.TestCase):
@@ -59,6 +59,44 @@ class NintendoMetadataTest(unittest.TestCase):
         self.assertEqual(link.metadata["genres"], ["Action"])
         self.assertEqual(link.metadata["contentRating"]["label"], "Everyone 10+")
         self.assertEqual(game.events[0].event_type, "demo")
+
+    def test_store_page_prioritizes_fetched_product_before_related_games(self) -> None:
+        html = """
+        <script id="__NEXT_DATA__" type="application/json">
+        {
+          "props": {
+            "pageProps": {
+              "initialApolloState": {
+                "Product:{\\"sku\\":\\"related\\"}": {
+                  "name": "Related Game",
+                  "urlKey": "related-game-switch",
+                  "sku": "related",
+                  "nsuid": "70010000000001",
+                  "releaseDate": "2025-01-01T00:00:00.000Z"
+                },
+                "Product:{\\"sku\\":\\"current\\"}": {
+                  "name": "Current Game",
+                  "urlKey": "current-game-switch",
+                  "sku": "current",
+                  "nsuid": "70010000000002",
+                  "releaseDate": "2026-01-01T00:00:00.000Z"
+                }
+              }
+            }
+          }
+        }
+        </script>
+        """
+
+        result = parse_store_page(
+            html,
+            "https://www.nintendo.com/us/store/products/current-game-switch/",
+            limit=1,
+        )
+
+        self.assertEqual(len(result.games), 1)
+        self.assertEqual(result.games[0].title, "Current Game")
+        self.assertEqual(result.games[0].release_date, "2026-01-01")
 
 
 if __name__ == "__main__":

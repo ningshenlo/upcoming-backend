@@ -10,6 +10,8 @@ from hot_trackers.youtube import (
     GameRow,
     YouTubeCandidate,
     YouTubeRunResult,
+    _dataforseo_pingback_url,
+    dataforseo_youtube_task_source_for_game,
     extract_youtube_video_id,
     score_candidate,
     select_best_candidate,
@@ -109,6 +111,22 @@ class YouTubeTrackingHelpersTest(unittest.TestCase):
         self.assertIsNotNone(matched)
         self.assertEqual(matched.video_id, "trailer")
 
+    def test_dataforseo_pingback_url_appends_required_placeholders(self) -> None:
+        self.assertEqual(
+            _dataforseo_pingback_url("https://example.com/api/pingback"),
+            "https://example.com/api/pingback?id=$id&tag=$tag",
+        )
+        self.assertEqual(
+            _dataforseo_pingback_url("https://example.com/api/pingback?source=youtube"),
+            "https://example.com/api/pingback?source=youtube&id=$id&tag=$tag",
+        )
+
+    def test_dataforseo_task_source_tracks_game_id(self) -> None:
+        self.assertEqual(
+            dataforseo_youtube_task_source_for_game("game-1"),
+            "serp/youtube/organic/task_post:game_id=game-1",
+        )
+
 
 class HotTrackerCliTest(unittest.TestCase):
     def test_parse_channel_names_dedupes_and_defaults(self) -> None:
@@ -144,6 +162,22 @@ class HotTrackerCliTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "YOUTUBE_API_KEY"):
             run_youtube(settings, discover_limit=1, refresh_limit=1, rediscovery_days=7)
+
+    def test_youtube_discovery_requires_dataforseo_key(self) -> None:
+        settings = Settings(
+            database_url="postgresql://example",
+            youtube_api_key="youtube-key",
+            raw_archive_dir=Path("var/raw"),
+            r2_bucket_name=None,
+            r2_endpoint_url=None,
+            r2_access_key_id=None,
+            r2_secret_access_key=None,
+            require_r2_archive=False,
+            user_agent="test",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "DATAFORSEO_API_KEY"):
+            run_youtube(settings, discover_limit=1, refresh_limit=0, rediscovery_days=7)
 
 
 if __name__ == "__main__":

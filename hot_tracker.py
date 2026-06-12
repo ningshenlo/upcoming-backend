@@ -66,8 +66,8 @@ def parse_channel_names(value: str) -> list[str]:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run game hot tracking channels.")
     parser.add_argument("--channels", default=os.environ.get("HOT_TRACKER_CHANNELS", DEFAULT_CHANNELS))
-    parser.add_argument("--discover-limit", type=int, default=_int_env("HOT_TRACKER_DISCOVERY_LIMIT", 80))
-    parser.add_argument("--refresh-limit", type=int, default=_int_env("HOT_TRACKER_REFRESH_LIMIT", 500))
+    parser.add_argument("--discover-limit", type=int, default=_int_env("HOT_TRACKER_DISCOVERY_LIMIT", 2000))
+    parser.add_argument("--refresh-limit", type=int, default=_int_env("HOT_TRACKER_REFRESH_LIMIT", 5000))
     parser.add_argument("--rediscovery-days", type=int, default=_int_env("HOT_TRACKER_REDISCOVERY_DAYS", 7))
     return parser.parse_args(argv)
 

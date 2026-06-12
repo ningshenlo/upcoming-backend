@@ -46,6 +46,25 @@ class NintendoRefreshHelpersTest(unittest.TestCase):
 
         self.assertIs(matched, game)
 
+    def test_matching_game_does_not_fall_back_to_unmatched_result(self) -> None:
+        game = CollectedGame(
+            title="Related Game",
+            source_slug="nintendo",
+            source_url="https://www.nintendo.com/us/store/products/related-game-switch/",
+            platform_slugs=["nintendo-switch"],
+        )
+
+        matched = _matching_game(
+            [game],
+            {
+                "nsuid": "70010000000000",
+                "sku_id": "7100000000",
+                "store_url": "https://www.nintendo.com/us/store/products/example-game-switch/",
+            },
+        )
+
+        self.assertIsNone(matched)
+
 
 if __name__ == "__main__":
     unittest.main()

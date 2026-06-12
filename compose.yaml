@@ -117,9 +117,9 @@ services:
         "--channels",
         "${HOT_TRACKER_CHANNELS:-youtube}",
         "--discover-limit",
-        "${HOT_TRACKER_DISCOVERY_LIMIT:-80}",
+        "${HOT_TRACKER_DISCOVERY_LIMIT:-2000}",
         "--refresh-limit",
-        "${HOT_TRACKER_REFRESH_LIMIT:-500}",
+        "${HOT_TRACKER_REFRESH_LIMIT:-5000}",
         "--rediscovery-days",
         "${HOT_TRACKER_REDISCOVERY_DAYS:-7}"
       ]

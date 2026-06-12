@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import replace
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 from typing import Any
 
 from core.http_client import fetch_json_post, fetch_text
@@ -148,6 +148,7 @@ def parse_store_page(html: str, fetched_url: str, limit: int = 20) -> CollectorR
         games = _parse_json_ld(html)
     if not games:
         games = _parse_product_links(html)
+    games = _prioritize_fetched_product(games, fetched_url)
 
     return CollectorResult(
         source_slug="nintendo",
@@ -368,6 +369,27 @@ def _game_identity(game: CollectedGame) -> str:
         if link.id:
             return link.id
     return game.source_url
+
+
+def _prioritize_fetched_product(games: list[CollectedGame], fetched_url: str) -> list[CollectedGame]:
+    target = _product_path_key(fetched_url)
+    if not target:
+        return games
+    for index, game in enumerate(games):
+        if _product_path_key(game.source_url) == target:
+            return [game, *games[:index], *games[index + 1 :]]
+    return games
+
+
+def _product_path_key(url: str | None) -> str | None:
+    value = _string_value(url)
+    if not value:
+        return None
+    path = urlparse(urljoin(NINTENDO_BASE_URL, value)).path.rstrip("/").lower()
+    path = re.sub(r"^/us/", "/", path)
+    if not path.startswith("/store/products/"):
+        return None
+    return path
 
 
 def _game_from_peon_promo(node: dict[str, Any]) -> CollectedGame | None:

@@ -16,6 +16,11 @@ class Settings:
     r2_secret_access_key: str | None
     require_r2_archive: bool
     user_agent: str
+    dataforseo_api_key: str | None = None
+    dataforseo_pingback_url: str | None = None
+    dataforseo_youtube_location_code: int = 2840
+    dataforseo_youtube_language_code: str = "en"
+    dataforseo_youtube_block_depth: int = 10
     r2_use_wrangler: bool = False
 
     @property
@@ -54,6 +59,11 @@ def load_settings() -> Settings:
             "UPCOMING_GAMES_USER_AGENT",
             "UpcomingGamesBot/0.1 (+https://upcominggames.com)",
         ),
+        dataforseo_api_key=os.environ.get("DFS") or os.environ.get("DATAFORSEO_API_KEY"),
+        dataforseo_pingback_url=os.environ.get("DATAFORSEO_PINGBACK_URL"),
+        dataforseo_youtube_location_code=_int_env("DATAFORSEO_YOUTUBE_LOCATION_CODE", 2840),
+        dataforseo_youtube_language_code=os.environ.get("DATAFORSEO_YOUTUBE_LANGUAGE_CODE", "en"),
+        dataforseo_youtube_block_depth=_int_env("DATAFORSEO_YOUTUBE_BLOCK_DEPTH", 10),
         r2_use_wrangler=r2_use_wrangler,
     )
 
@@ -66,3 +76,13 @@ def _r2_endpoint_url() -> str | None:
     if account_id:
         return f"https://{account_id}.r2.cloudflarestorage.com"
     return None
+
+
+def _int_env(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default

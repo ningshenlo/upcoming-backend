@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Upcoming Games logo</title>
+  <desc id="desc">A green calendar mark combined with a game controller.</desc>
+  <defs>
+    <linearGradient id="calendarGreen" x1="164" y1="160" x2="852" y2="902" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#14c784"/>
+      <stop offset="0.5" stop-color="#03884f"/>
+      <stop offset="1" stop-color="#026338"/>
+    </linearGradient>
+    <linearGradient id="controllerGreen" x1="200" y1="574" x2="824" y2="876" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#06733f"/>
+      <stop offset="0.52" stop-color="#039353"/>
+      <stop offset="1" stop-color="#047141"/>
+    </linearGradient>
+    <linearGradient id="limeAccent" x1="650" y1="340" x2="858" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#a8ef18"/>
+      <stop offset="1" stop-color="#72c915"/>
+    </linearGradient>
+  </defs>
+
+  <g shape-rendering="geometricPrecision">
+    <path
+      fill="url(#calendarGreen)"
+      d="M228 208h568c54.1 0 98 43.9 98 98v386c0 47.5-5.4 92.1-25.7 133.2C843.6 875.4 798.7 908 744.8 908c-50.5 0-84.2-27.9-113.2-73.5l-22.9-36.1C594.2 775.5 570.6 762 543.5 762h-63c-27.1 0-50.7 13.5-65.2 36.4l-22.9 36.1C363.4 880.1 329.7 908 279.2 908c-53.9 0-98.8-32.6-123.5-82.8C135.4 784.1 130 739.5 130 692V306c0-54.1 43.9-98 98-98Z"
+    />
+
+    <rect x="276" y="112" width="98" height="192" rx="49" fill="#fff" />
+    <rect x="650" y="112" width="98" height="192" rx="49" fill="#fff" />
+    <rect x="307" y="143" width="36" height="130" rx="18" fill="url(#limeAccent)" />
+    <rect x="681" y="143" width="36" height="130" rx="18" fill="url(#limeAccent)" />
+
+    <rect x="224" y="340" width="576" height="314" rx="14" fill="#fff" />
+
+    <g fill="#057341">
+      <rect x="332" y="398" width="70" height="70" rx="11" />
+      <rect x="455" y="398" width="70" height="70" rx="11" />
+      <rect x="578" y="398" width="70" height="70" rx="11" />
+      <rect x="332" y="515" width="70" height="70" rx="11" />
+      <rect x="455" y="515" width="70" height="70" rx="11" />
+      <rect x="578" y="515" width="70" height="70" rx="11" />
+    </g>
+    <rect x="701" y="398" width="70" height="70" rx="11" fill="url(#limeAccent)" />
+    <rect x="701" y="515" width="70" height="70" rx="11" fill="#057341" />
+
+    <path
+      fill="url(#controllerGreen)"
+      d="M224.6 622.8c42-50.7 109.6-66.1 171-38.6 31.3 14 38.5 43.6 70.4 49.8h92c31.9-6.2 39.1-35.8 70.4-49.8 61.4-27.5 129-12.1 171 38.6 37.1 44.7 54 129.4 31.2 190.5-18.3 49.1-55.1 72.8-98.2 65.8-42.5-6.9-68.7-39.3-98.8-87.5-17.7-28.4-47.9-45.6-81.4-45.6h-80.4c-33.5 0-63.7 17.2-81.4 45.6-30.1 48.2-56.3 80.6-98.8 87.5-43.1 7-79.9-16.7-98.2-65.8-22.8-61.1-5.9-145.8 31.2-190.5Z"
+    />
+
+    <g fill="#fff">
+      <rect x="270" y="691" width="170" height="64" rx="18" />
+      <rect x="323" y="638" width="64" height="170" rx="18" />
+    </g>
+
+    <circle cx="704" cy="738" r="44" fill="url(#limeAccent)" />
+    <circle cx="790" cy="675" r="44" fill="url(#limeAccent)" />
+  </g>
+</svg>

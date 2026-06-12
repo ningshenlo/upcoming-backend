@@ -156,7 +156,7 @@ def _matching_game(games: list[CollectedGame], row: dict[str, Any]) -> Collected
             return game
         if store_url and game.source_url.rstrip("/") == store_url:
             return game
-    return games[0] if games else None
+    return None
 
 
 def parse_args() -> argparse.Namespace:
