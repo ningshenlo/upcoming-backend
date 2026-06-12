@@ -40,9 +40,10 @@ def finish_job(store: NeonStore | None, run: JobRun, status: str | None = None, 
     metadata = {
         "rawDataPaths": run.raw_data_paths or [],
         "collectorResults": run.collector_results,
-        "errors": run.errors,
         "failedCount": run.error_count,
     }
+    if run.errors:
+        metadata["errors"] = run.errors
     store.finish_data_job(
         job_id=run.job_id,
         status=resolved_status,

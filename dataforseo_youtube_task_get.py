@@ -74,6 +74,8 @@ def run(settings: Settings, limit: int) -> DfsYoutubeTaskGetResult:
         tasks = _claim_pending_tasks(store, limit)
         store.conn.commit()
         print(f"dataforseo youtube task_get: claimed tasks={len(tasks)}", flush=True)
+        if not tasks:
+            print("dataforseo youtube task_get: no pending tasks; finishing without API calls", flush=True)
 
         for task in tasks:
             job.processed_count += 1
