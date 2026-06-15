@@ -2,10 +2,36 @@ from __future__ import annotations
 
 import unittest
 
-from dataforseo_youtube_task_get import parse_dataforseo_youtube_candidates
+from dataforseo_youtube_task_get import (
+    DFS_YOUTUBE_TASK_SOURCE,
+    DFSTASK_PENDING,
+    DFSTASK_PROCESSING,
+    DFSTASK_SUBMITTED,
+    _claim_pending_tasks,
+    parse_dataforseo_youtube_candidates,
+)
 
 
 class DataForSeoYouTubeTaskGetTest(unittest.TestCase):
+    def test_claim_pending_tasks_includes_submitted_tasks(self) -> None:
+        store = _FakeStore()
+
+        tasks = _claim_pending_tasks(store, 5)
+
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0].task_id, "task-1")
+        self.assertEqual(
+            store.conn.cursor_instance.params,
+            (
+                DFSTASK_PENDING,
+                DFSTASK_SUBMITTED,
+                DFS_YOUTUBE_TASK_SOURCE,
+                f"{DFS_YOUTUBE_TASK_SOURCE}:%",
+                5,
+                DFSTASK_PROCESSING,
+            ),
+        )
+
     def test_parse_dataforseo_youtube_candidates_filters_video_items(self) -> None:
         payload = {
             "status_code": 20000,
@@ -52,6 +78,36 @@ class DataForSeoYouTubeTaskGetTest(unittest.TestCase):
         self.assertEqual(candidates[0].video_id, "zbw331U5pfs")
         self.assertEqual(candidates[0].channel_title, "Copa City")
         self.assertEqual(candidates[0].published_at, "2024-06-12 07:42:57 +00:00")
+
+
+class _FakeStore:
+    def __init__(self) -> None:
+        self.conn = _FakeConn()
+
+
+class _FakeConn:
+    def __init__(self) -> None:
+        self.cursor_instance = _FakeCursor()
+
+    def cursor(self):
+        return self.cursor_instance
+
+
+class _FakeCursor:
+    def __init__(self) -> None:
+        self.params = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def execute(self, sql, params) -> None:
+        self.params = params
+
+    def fetchall(self):
+        return [("task-1", f"{DFS_YOUTUBE_TASK_SOURCE}:game_id=game-1")]
 
 
 if __name__ == "__main__":

@@ -25,6 +25,7 @@ DFS_YOUTUBE_TASK_GET_URL = "https://api.dataforseo.com/v3/serp/youtube/organic/t
 DFS_OK_STATUS_CODE = 20000
 DFS_TERMINAL_TASK_STATUS_CODES = {40000, 40401, 40403, 50000}
 
+DFSTASK_SUBMITTED = "submitted"
 DFSTASK_PENDING = "pending"
 DFSTASK_PROCESSING = "processing"
 DFSTASK_DONE = "done"
@@ -198,7 +199,7 @@ def _claim_pending_tasks(store: NeonStore, limit: int) -> list[DfsTaskRow]:
             WITH claim AS (
               SELECT task_id
               FROM dfstasks
-              WHERE status = %s
+              WHERE status IN (%s, %s)
                 AND (source = %s OR source LIKE %s)
               ORDER BY updated_at ASC
               LIMIT %s
@@ -211,7 +212,14 @@ def _claim_pending_tasks(store: NeonStore, limit: int) -> list[DfsTaskRow]:
             WHERE d.task_id = claim.task_id
             RETURNING d.task_id, d.source
             """,
-            (DFSTASK_PENDING, DFS_YOUTUBE_TASK_SOURCE, f"{DFS_YOUTUBE_TASK_SOURCE}:%", limit, DFSTASK_PROCESSING),
+            (
+                DFSTASK_PENDING,
+                DFSTASK_SUBMITTED,
+                DFS_YOUTUBE_TASK_SOURCE,
+                f"{DFS_YOUTUBE_TASK_SOURCE}:%",
+                limit,
+                DFSTASK_PROCESSING,
+            ),
         )
         return [DfsTaskRow(task_id=row[0], source=row[1]) for row in cur.fetchall()]
 
