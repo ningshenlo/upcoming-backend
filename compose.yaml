@@ -28,16 +28,6 @@ services:
         "${OFFICIAL_RELEASE_LIMIT:-50}"
       ]
 
-  igdb-discovery-sync:
-    <<: *scraper
-    command:
-      [
-        "python",
-        "igdb_discovery_sync.py",
-        "--limit",
-        "${IGDB_DISCOVERY_LIMIT:-50}"
-      ]
-
   steam-metadata-backfill:
     <<: *scraper
     command:

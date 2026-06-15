@@ -23,6 +23,7 @@ class SchedulerConfigTest(unittest.TestCase):
 
         self.assertEqual(jobs["official-release-sync"].interval_minutes, 30)
         self.assertIn("12", jobs["official-release-sync"].command)
+        self.assertNotIn("igdb-discovery-sync", jobs)
         self.assertFalse(jobs["steam-tracked-refresh"].enabled)
         self.assertEqual(jobs["steam-tracked-refresh"].interval_minutes, 15)
         self.assertEqual(jobs["steam-tracked-refresh"].command, ("python", "tracked/steam_tracked_refresh.py", "--limit", "7"))
