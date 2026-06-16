@@ -10,6 +10,7 @@ from hot_trackers.youtube import (
     GameRow,
     YouTubeCandidate,
     YouTubeRunResult,
+    build_discovery_query,
     _dataforseo_pingback_url,
     dataforseo_youtube_task_source_for_game,
     extract_youtube_video_id,
@@ -30,6 +31,9 @@ class YouTubeTrackingHelpersTest(unittest.TestCase):
             extract_youtube_video_id("https://www.youtube.com/shorts/abc_123-XY0"),
             "abc_123-XY0",
         )
+
+    def test_build_discovery_query_includes_game_context(self) -> None:
+        self.assertEqual(build_discovery_query("Brazzante"), "Brazzante game official trailer")
 
     def test_score_candidate_prefers_official_trailer_over_reaction(self) -> None:
         game = GameRow(
@@ -110,6 +114,32 @@ class YouTubeTrackingHelpersTest(unittest.TestCase):
 
         self.assertIsNotNone(matched)
         self.assertEqual(matched.video_id, "trailer")
+
+    def test_select_best_candidate_rejects_unrelated_movie_trailer(self) -> None:
+        game = GameRow(
+            id="game-1",
+            title="Brazzante",
+            aliases=[],
+            trailer_url=None,
+            publishers=[],
+            developers=[],
+        )
+        candidates = [
+            YouTubeCandidate(
+                video_id="movie",
+                title="The Brutalist | Official Trailer HD | A24",
+                description="",
+                channel_id="channel-1",
+                channel_title="A24",
+                published_at=None,
+                thumbnail_url=None,
+                video_url="https://www.youtube.com/watch?v=movie",
+                match_confidence=0,
+                match_reasons=[],
+            )
+        ]
+
+        self.assertIsNone(select_best_candidate(game, candidates))
 
     def test_dataforseo_pingback_url_appends_required_placeholders(self) -> None:
         self.assertEqual(

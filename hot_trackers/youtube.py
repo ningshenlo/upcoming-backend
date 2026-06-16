@@ -21,6 +21,7 @@ DATAFORSEO_YOUTUBE_TASK_POST_URL = "https://api.dataforseo.com/v3/serp/youtube/o
 DATAFORSEO_YOUTUBE_TASK_SOURCE = "serp/youtube/organic/task_post"
 YOUTUBE_BATCH_SIZE = 50
 SEARCH_MAX_RESULTS = 10
+MIN_SELECTED_MATCH_CONFIDENCE = 50
 
 POSITIVE_TITLE_TERMS = {
     "announcement",
@@ -260,7 +261,7 @@ def extract_youtube_video_id(url: str | None) -> str | None:
 
 
 def build_discovery_query(title: str) -> str:
-    return f"{title} official trailer"
+    return f"{title} game official trailer"
 
 
 def dataforseo_youtube_task_source_for_game(game_id: str) -> str:
@@ -322,7 +323,10 @@ def select_best_candidate(game: GameRow, candidates: list[YouTubeCandidate]) -> 
     if not candidates:
         return None
     scored = [score_candidate(game, candidate) for candidate in candidates]
-    return max(scored, key=lambda item: item.match_confidence)
+    best = max(scored, key=lambda item: item.match_confidence)
+    if best.match_confidence < MIN_SELECTED_MATCH_CONFIDENCE:
+        return None
+    return best
 
 
 def search_youtube_candidates(query: str, api_key: str, user_agent: str) -> list[YouTubeCandidate]:
