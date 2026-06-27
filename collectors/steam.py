@@ -166,7 +166,7 @@ def parse_search_payload(payload: Any, fetched_url: str) -> CollectorResult:
     )
 
 
-def apply_appdetails(game: CollectedGame, payload: Any) -> CollectedGame | None:
+def apply_appdetails(game: CollectedGame, payload: Any, *, allow_released: bool = False) -> CollectedGame | None:
     app_id = game.external_ids.get("steamAppId")
     if not isinstance(app_id, int) or not isinstance(payload, dict):
         return game
@@ -185,7 +185,7 @@ def apply_appdetails(game: CollectedGame, payload: Any) -> CollectedGame | None:
     release_date_text = None
     release = data.get("release_date")
     if isinstance(release, dict):
-        if release.get("coming_soon") is False:
+        if release.get("coming_soon") is False and not allow_released:
             return None
         release_date_text = _string_value(release.get("date"))
         detail_date, detail_accuracy = parse_release_date(release.get("date"))

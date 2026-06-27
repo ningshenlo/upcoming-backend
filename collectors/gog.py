@@ -117,8 +117,8 @@ def parse_catalog_payload(payload: Any) -> list[CollectedGame]:
     return _games_from_products(products, metadata_source="gog_catalog")
 
 
-def parse_game_payload(payload: Any) -> list[CollectedGame]:
-    game = _game_from_detail(payload, metadata_source="gog_game_detail")
+def parse_game_payload(payload: Any, *, allow_released: bool = False) -> list[CollectedGame]:
+    game = _game_from_detail(payload, metadata_source="gog_game_detail", allow_released=allow_released)
     return [game] if game else []
 
 
@@ -246,11 +246,11 @@ def _game_from_catalog_product(product: dict[str, Any], metadata_source: str) ->
     )
 
 
-def _game_from_detail(payload: Any, metadata_source: str) -> CollectedGame | None:
+def _game_from_detail(payload: Any, metadata_source: str, *, allow_released: bool = False) -> CollectedGame | None:
     if not isinstance(payload, dict):
         return None
     release_status = (_string_value(payload.get("releaseStatus")) or "").lower()
-    if release_status and release_status != "coming-soon":
+    if release_status and release_status != "coming-soon" and not allow_released:
         return None
 
     embedded = _dict_value(payload.get("_embedded")) or {}
@@ -271,6 +271,7 @@ def _game_from_detail(payload: Any, metadata_source: str) -> CollectedGame | Non
     features = _named_items(embedded.get("features"))
     operating_systems = _operating_systems(embedded.get("supportedOperatingSystems"))
     trailer_url, trailer_thumbnail_url = _video_media(embedded.get("videos"))
+    price_text, price, currency = _price_info(product.get("price"))
     store_link = StoreLink(
         id=f"gog:{product_id}",
         store_name="gog",
@@ -278,6 +279,9 @@ def _game_from_detail(payload: Any, metadata_source: str) -> CollectedGame | Non
         platform_slugs=GOG_PLATFORM_SLUGS,
         product_id=product_id,
         edition_name="GOG store page",
+        price_text=price_text,
+        price=price,
+        currency=currency,
         preorder_available=product.get("isPreorder") if isinstance(product.get("isPreorder"), bool) else None,
         wishlist_available=None,
         demo_available=None,

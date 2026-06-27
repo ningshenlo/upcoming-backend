@@ -119,19 +119,35 @@ def _tracked_playstation_rows(store: NeonStore, limit: int) -> list[dict[str, An
                   AND p.slug = ANY(%s)
               ) ps ON true
               LEFT JOIN LATERAL (
-                SELECT last_checked_at
+                SELECT last_checked_at, price_text, price
                 FROM store_links
                 WHERE game_id = g.id
                   AND store_name = 'playstation_store'
                 ORDER BY last_checked_at DESC NULLS LAST
                 LIMIT 1
               ) sl ON true
-              WHERE g.status = 'upcoming'
-                AND g.official_url ~ '/concept/[0-9]+'
+              WHERE g.official_url ~ '/concept/[0-9]+'
                 AND array_length(ps.platform_slugs, 1) IS NOT NULL
                 AND (
-                  COALESCE(fr.release_date, g.primary_release_date) IS NULL
-                  OR COALESCE(fr.release_date, g.primary_release_date)::date >= CURRENT_DATE
+                  (
+                    g.status = 'upcoming'
+                    AND (
+                      COALESCE(fr.release_date, g.primary_release_date) IS NULL
+                      OR COALESCE(fr.release_date, g.primary_release_date)::date >= CURRENT_DATE
+                    )
+                  )
+                  OR (
+                    g.status IN ('upcoming', 'released')
+                    AND COALESCE(fr.release_date, g.primary_release_date)::date < CURRENT_DATE
+                    AND COALESCE(fr.release_date, g.primary_release_date)::date >= CURRENT_DATE - INTERVAL '14 days'
+                    AND (
+                      sl.last_checked_at IS NULL
+                      OR (
+                        sl.price IS NULL
+                        AND NULLIF(BTRIM(sl.price_text), '') IS NULL
+                      )
+                    )
+                  )
                 )
             )
             SELECT *

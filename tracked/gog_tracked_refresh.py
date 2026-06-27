@@ -46,7 +46,7 @@ def run_refresh(limit: int) -> RefreshResult:
             product_id = row["product_id"]
             try:
                 payload = fetch_game_payload(product_id, settings.user_agent)
-                game = _matching_game(parse_game_payload(payload), row)
+                game = _matching_game(parse_game_payload(payload, allow_released=True), row)
                 job.processed_count += 1
                 if game is None:
                     job.skipped_count += 1
@@ -120,11 +120,27 @@ def _tracked_gog_rows(store: NeonStore, limit: int) -> list[dict[str, Any]]:
                 WHERE gp.game_id = g.id
                   AND p.slug = ANY(%s)
               ) ps ON true
-              WHERE g.status = 'upcoming'
-                AND array_length(ps.platform_slugs, 1) IS NOT NULL
+              WHERE array_length(ps.platform_slugs, 1) IS NOT NULL
                 AND (
-                  COALESCE(fr.release_date, g.primary_release_date) IS NULL
-                  OR COALESCE(fr.release_date, g.primary_release_date)::date >= CURRENT_DATE
+                  (
+                    g.status = 'upcoming'
+                    AND (
+                      COALESCE(fr.release_date, g.primary_release_date) IS NULL
+                      OR COALESCE(fr.release_date, g.primary_release_date)::date >= CURRENT_DATE
+                    )
+                  )
+                  OR (
+                    g.status IN ('upcoming', 'released')
+                    AND COALESCE(fr.release_date, g.primary_release_date)::date < CURRENT_DATE
+                    AND COALESCE(fr.release_date, g.primary_release_date)::date >= CURRENT_DATE - INTERVAL '14 days'
+                    AND (
+                      sl.last_checked_at IS NULL
+                      OR (
+                        sl.price IS NULL
+                        AND NULLIF(BTRIM(sl.price_text), '') IS NULL
+                      )
+                    )
+                  )
                 )
               ORDER BY g.id,
                 sl.last_checked_at ASC NULLS FIRST,

@@ -38,6 +38,40 @@ class CollectorEventsTest(unittest.TestCase):
         self.assertEqual(enriched.date_accuracy, "quarter")
         self.assertEqual([event.event_type for event in enriched.events], ["demo"])
 
+    def test_steam_appdetails_can_parse_released_price_for_tracked_refresh(self) -> None:
+        game = CollectedGame(
+            title="Example Game",
+            source_slug="steam",
+            source_url="https://store.steampowered.com/app/123/Example_Game/",
+            platform_slugs=["pc", "steam"],
+            external_ids={"steamAppId": 123},
+        )
+        payload = {
+            "123": {
+                "success": True,
+                "data": {
+                    "type": "game",
+                    "steam_appid": 123,
+                    "name": "Example Game",
+                    "release_date": {"coming_soon": False, "date": "Jun 26, 2026"},
+                    "price_overview": {
+                        "final": 799,
+                        "final_formatted": "$7.99",
+                        "currency": "USD",
+                    },
+                },
+            }
+        }
+
+        self.assertIsNone(apply_appdetails(game, payload))
+        enriched = apply_appdetails(game, payload, allow_released=True)
+
+        self.assertIsNotNone(enriched)
+        assert enriched is not None
+        self.assertEqual(enriched.store_links[0].price_text, "$7.99")
+        self.assertEqual(enriched.store_links[0].price, 7.99)
+        self.assertEqual(enriched.store_links[0].currency, "USD")
+
     def test_playstation_store_links_add_demo_event(self) -> None:
         game = CollectedGame(
             title="Example Game",

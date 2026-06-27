@@ -48,7 +48,7 @@ def run_refresh(limit: int) -> RefreshResult:
             try:
                 game = _row_to_game(row)
                 details_url = STEAM_APPDETAILS_URL.format(app_id=app_id)
-                enriched = apply_appdetails(game, fetch_json(details_url, settings.user_agent))
+                enriched = apply_appdetails(game, fetch_json(details_url, settings.user_agent), allow_released=True)
                 job.processed_count += 1
                 if enriched is None:
                     job.skipped_count += 1
@@ -114,18 +114,34 @@ def _tracked_steam_rows(store: NeonStore, limit: int) -> list[dict[str, Any]]:
             JOIN platforms p ON p.id = gp.platform_id AND p.slug = 'steam'
             LEFT JOIN first_release fr ON fr.game_id = g.id
             LEFT JOIN LATERAL (
-              SELECT last_checked_at
+              SELECT last_checked_at, price_text, price
               FROM store_links
               WHERE game_id = g.id
                 AND store_name = 'steam'
               ORDER BY last_checked_at DESC NULLS LAST
               LIMIT 1
             ) sl ON true
-            WHERE g.status = 'upcoming'
-              AND g.steam_app_id IS NOT NULL
+            WHERE g.steam_app_id IS NOT NULL
               AND (
-                COALESCE(fr.release_date, g.primary_release_date) IS NULL
-                OR COALESCE(fr.release_date, g.primary_release_date)::date >= CURRENT_DATE
+                (
+                  g.status = 'upcoming'
+                  AND (
+                    COALESCE(fr.release_date, g.primary_release_date) IS NULL
+                    OR COALESCE(fr.release_date, g.primary_release_date)::date >= CURRENT_DATE
+                  )
+                )
+                OR (
+                  g.status IN ('upcoming', 'released')
+                  AND COALESCE(fr.release_date, g.primary_release_date)::date < CURRENT_DATE
+                  AND COALESCE(fr.release_date, g.primary_release_date)::date >= CURRENT_DATE - INTERVAL '14 days'
+                  AND (
+                    sl.last_checked_at IS NULL
+                    OR (
+                      sl.price IS NULL
+                      AND NULLIF(BTRIM(sl.price_text), '') IS NULL
+                    )
+                  )
+                )
               )
             ORDER BY
               COALESCE(sl.last_checked_at, g.last_scraped_at, g.updated_at, g.created_at) ASC NULLS FIRST,

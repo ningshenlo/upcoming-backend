@@ -134,6 +134,32 @@ class GogMetadataTest(unittest.TestCase):
         self.assertEqual(game.trailer_url, "https://www.youtube.com/embed/example")
         self.assertTrue(game.store_links[0].preorder_available)
 
+    def test_game_payload_can_parse_released_price_for_tracked_refresh(self) -> None:
+        payload = {
+            "releaseStatus": "released",
+            "_embedded": {
+                "product": {
+                    "id": 1234567890,
+                    "title": "Example GOG Game",
+                    "globalReleaseDate": "2026-06-12T00:00:00+00:00",
+                    "category": "GAME",
+                    "price": {
+                        "final": "$12.99",
+                        "finalMoney": {"amount": "12.99", "currency": "USD"},
+                    },
+                },
+            },
+        }
+
+        self.assertEqual(parse_game_payload(payload), [])
+        games = parse_game_payload(payload, allow_released=True)
+
+        self.assertEqual(len(games), 1)
+        link = games[0].store_links[0]
+        self.assertEqual(link.price_text, "$12.99")
+        self.assertEqual(link.price, 12.99)
+        self.assertEqual(link.currency, "USD")
+
 
 if __name__ == "__main__":
     unittest.main()
